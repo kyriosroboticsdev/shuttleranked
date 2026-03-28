@@ -50,53 +50,56 @@ export default function AdminPanel({ players, currentUid }) {
       timestamp: serverTimestamp(),
     });
 
-    setStatus(`Done! ${winner.name} +${change} ELO, ${loser.name} -${change} ELO`);
+    setStatus(`Done! ${winner.name} +${change} ELO · ${loser.name} -${change} ELO`);
     setSets([{ w: "", l: "" }]);
     setWinnerId(""); setLoserId("");
+    setTimeout(() => setStatus(""), 5000);
   }
 
   return (
-    <div style={{ background: "#f9f9f9", borderRadius: 12, padding: "1.25rem", border: "1px solid #eee" }}>
-      <div style={{ fontSize: 15, fontWeight: 500, marginBottom: "1rem" }}>Record match result</div>
-      {status && <div style={{ fontSize: 13, marginBottom: "0.75rem", padding: "8px 12px", background: "#fff", borderRadius: 8, border: "1px solid #eee" }}>{status}</div>}
+    <div style={{ background: "var(--bg-secondary)", borderRadius: 12, padding: "1.25rem", border: "1px solid var(--border)" }}>
+      <div style={{ fontSize: 15, fontWeight: 500, marginBottom: "1rem", color: "var(--text)" }}>Record match result</div>
+      {status && <div style={{ fontSize: 13, marginBottom: "0.75rem", padding: "8px 12px", background: "var(--bg-card)", borderRadius: 8, border: "1px solid var(--border)", color: "var(--text)" }}>{status}</div>}
 
       <div style={{ marginBottom: "0.75rem" }}>
-        <div style={{ fontSize: 12, color: "#999", marginBottom: 4 }}>Match type</div>
-        <select value={type} onChange={e => setType(e.target.value)} style={{ width: "100%", fontSize: 14, padding: 8, borderRadius: 8, border: "1px solid #ddd" }}>
+        <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>Match type</div>
+        <select value={type} onChange={e => setType(e.target.value)}>
           <option value="singles">Singles</option>
           <option value="doubles">Doubles</option>
         </select>
       </div>
 
       <div style={{ marginBottom: "0.75rem" }}>
-        <div style={{ fontSize: 12, color: "#999", marginBottom: 4 }}>Winner</div>
-        <select value={winnerId} onChange={e => setWinnerId(e.target.value)} style={{ width: "100%", fontSize: 14, padding: 8, borderRadius: 8, border: "1px solid #ddd" }}>
+        <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>Winner</div>
+        <select value={winnerId} onChange={e => setWinnerId(e.target.value)}>
           <option value="">Select winner</option>
           {players.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
       </div>
 
       <div style={{ marginBottom: "0.75rem" }}>
-        <div style={{ fontSize: 12, color: "#999", marginBottom: 4 }}>Loser</div>
-        <select value={loserId} onChange={e => setLoserId(e.target.value)} style={{ width: "100%", fontSize: 14, padding: 8, borderRadius: 8, border: "1px solid #ddd" }}>
+        <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>Loser</div>
+        <select value={loserId} onChange={e => setLoserId(e.target.value)}>
           <option value="">Select loser</option>
           {players.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
       </div>
 
       <div style={{ marginBottom: "0.75rem" }}>
-        <div style={{ fontSize: 12, color: "#999", marginBottom: 4 }}>Set scores</div>
+        <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>Set scores</div>
         {sets.map((s, i) => (
           <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 8, marginBottom: 6, alignItems: "center" }}>
-            <input type="number" placeholder="Winner score" value={s.w} onChange={e => { const n=[...sets]; n[i].w=e.target.value; setSets(n); }} style={{ padding: 8, fontSize: 14, borderRadius: 8, border: "1px solid #ddd", textAlign: "center" }} />
-            <span style={{ fontSize: 12, color: "#999", textAlign: "center" }}>Set {i+1}</span>
-            <input type="number" placeholder="Loser score" value={s.l} onChange={e => { const n=[...sets]; n[i].l=e.target.value; setSets(n); }} style={{ padding: 8, fontSize: 14, borderRadius: 8, border: "1px solid #ddd", textAlign: "center" }} />
+            <input type="number" placeholder="Winner score" value={s.w} onChange={e => { const n = [...sets]; n[i].w = e.target.value; setSets(n); }} style={{ textAlign: "center" }} />
+            <span style={{ fontSize: 12, color: "var(--text-hint)", textAlign: "center" }}>Set {i + 1}</span>
+            <input type="number" placeholder="Loser score" value={s.l} onChange={e => { const n = [...sets]; n[i].l = e.target.value; setSets(n); }} style={{ textAlign: "center" }} />
           </div>
         ))}
-        <button onClick={() => setSets([...sets, { w: "", l: "" }])} style={{ fontSize: 12, color: "#999", background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>+ Add set</button>
+        <button onClick={() => setSets([...sets, { w: "", l: "" }])} style={{ fontSize: 12, color: "var(--text-secondary)", background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>+ Add set</button>
       </div>
 
-      <button onClick={submit} style={{ width: "100%", padding: 10, fontSize: 14, fontWeight: 500, background: "#111", color: "#fff", border: "none", borderRadius: 8, cursor: "pointer", marginTop: 8 }}>Submit result</button>
+      <button onClick={submit} style={{ width: "100%", padding: 10, fontSize: 14, fontWeight: 500, background: "var(--text)", color: "var(--bg)", border: "none", borderRadius: 8, cursor: "pointer", marginTop: 8 }}>
+        Submit result
+      </button>
     </div>
   );
 }
