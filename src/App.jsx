@@ -5,6 +5,7 @@ import { auth, provider, db } from "./firebase";
 import { useTheme } from "./context/ThemeContext";
 import Leaderboard from "./components/Leaderboard";
 import Tournament from "./components/Tournament";
+import TournamentHistory from "./components/TournamentHistory";
 import AdminPanel from "./components/AdminPanel";
 import Profile from "./components/Profile";
 import Settings from "./components/Settings";
@@ -14,6 +15,7 @@ export default function App() {
   const [playerDoc, setPlayerDoc] = useState(null);
   const [players, setPlayers] = useState([]);
   const [view, setView] = useState("leaderboard");
+  const [activeTournament, setActiveTournament] = useState(null);
   const { dark, setDark } = useTheme();
 
   useEffect(() => {
@@ -45,6 +47,14 @@ export default function App() {
   useEffect(() => {
     const unsub = onSnapshot(collection(db, "players"), (snap) => {
       setPlayers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
+    });
+    return unsub;
+  }, []);
+
+  useEffect(() => {
+    const unsub = onSnapshot(doc(db, "tournaments", "active"), (snap) => {
+      if (snap.exists()) setActiveTournament({ id: snap.id, ...snap.data() });
+      else setActiveTournament(null);
     });
     return unsub;
   }, []);
@@ -85,7 +95,8 @@ export default function App() {
   const isAdmin = playerDoc?.isAdmin;
   const tabs = [
     { id: "leaderboard", label: "Leaderboard" },
-    { id: "tournament", label: "Tournament" },
+    { id: "tournament", label: activeTournament ? "🏸 Live" : "Tournament" },
+    { id: "history", label: "History" },
     ...(isAdmin ? [{ id: "admin", label: "Record Match" }] : []),
     { id: "profile", label: "My Profile" },
     { id: "settings", label: "Settings" },
@@ -100,10 +111,7 @@ export default function App() {
         <div style={{ display: "flex", alignItems: "center", gap: 8, fontSize: 13, color: "var(--text-secondary)" }}>
           <span>{user.displayName?.split(" ")[0]}</span>
           {isAdmin && <span style={{ fontSize: 11, background: "#FAEEDA", color: "#633806", padding: "2px 6px", borderRadius: 10 }}>admin</span>}
-          <button
-            onClick={() => setDark(d => !d)}
-            style={{ fontSize: 12, padding: "4px 10px", cursor: "pointer", border: "1px solid var(--border-mid)", borderRadius: 6, background: "transparent", color: "var(--text-secondary)" }}
-          >
+          <button onClick={() => setDark(d => !d)} style={{ fontSize: 12, padding: "4px 10px", cursor: "pointer", border: "1px solid var(--border-mid)", borderRadius: 6, background: "transparent", color: "var(--text-secondary)" }}>
             {dark ? "☀️" : "🌙"}
           </button>
           <button onClick={handleLogout} style={{ fontSize: 12, padding: "4px 10px", cursor: "pointer", border: "1px solid var(--border-mid)", borderRadius: 6, background: "transparent", color: "var(--text-secondary)" }}>
@@ -115,7 +123,8 @@ export default function App() {
       <div style={{ display: "flex", gap: 4, background: "var(--bg-secondary)", borderRadius: 8, padding: 4, marginBottom: "1.5rem", overflowX: "auto" }}>
         {tabs.map(t => (
           <button key={t.id} onClick={() => setView(t.id)} style={{
-            flex: 1, padding: "8px 6px", fontSize: 13, borderRadius: 6, border: view === t.id ? "1px solid var(--border-mid)" : "none",
+            flex: 1, padding: "8px 6px", fontSize: 13, borderRadius: 6,
+            border: view === t.id ? "1px solid var(--border-mid)" : "none",
             background: view === t.id ? "var(--bg-card)" : "transparent",
             fontWeight: view === t.id ? 500 : 400,
             cursor: "pointer", color: "var(--text)", whiteSpace: "nowrap",
@@ -124,9 +133,23 @@ export default function App() {
       </div>
 
       {view === "leaderboard" && <Leaderboard players={players} />}
-      {view === "tournament" && <Tournament players={players} />}
+      {view === "tournament" && (
+        <Tournament
+          players={players}
+          currentUid={user.uid}
+          isAdmin={isAdmin}
+          activeTournament={activeTournament}
+        />
+      )}
+      {view === "history" && <TournamentHistory />}
       {view === "admin" && isAdmin && <AdminPanel players={players} currentUid={user.uid} />}
-      {view === "profile" && <Profile players={players} currentUid={user.uid} />}
+      {view === "profile" && (
+        <Profile
+          players={players}
+          currentUid={user.uid}
+          activeTournament={activeTournament}
+        />
+      )}
       {view === "settings" && <Settings user={user} onDeleted={() => { setUser(null); setView("leaderboard"); }} />}
     </div>
   );
