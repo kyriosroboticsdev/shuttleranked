@@ -2,6 +2,7 @@ import { useState } from "react";
 import { doc, setDoc, deleteDoc, addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase";
 
+// ── Tier assignment ──
 function assignTiers(players) {
   const sorted = [...players].sort((a, b) => b.doublesElo - a.doublesElo);
   const n = sorted.length;
@@ -19,6 +20,7 @@ function assignTiers(players) {
   return result;
 }
 
+// ── Auto pairing ──
 function autoPair(players) {
   const sorted = [...players].sort((a, b) => b.doublesElo - a.doublesElo);
   const n = sorted.length;
@@ -29,37 +31,17 @@ function autoPair(players) {
   }));
 }
 
+// ── Bracket builder ──
 function nextPow2(n) { let p = 1; while (p < n) p *= 2; return p; }
 
 function buildBracket(teams) {
-  // Firestore can't store nested arrays — flatten rounds into objects
-  function serializeBracket(rounds) {
-    return rounds.map((matches, ri) => ({
-      roundIndex: ri,
-      matches: matches.map((m, mi) => ({
-        matchIndex: mi,
-        a: m.a ?? null,
-        b: m.b ?? null,
-        winner: m.winner ?? null,
-      }))
-    }));
-  }
-
-  function deserializeBracket(serialized) {
-    if (!serialized) return [];
-    return serialized.map(round => round.matches.map(m => ({
-      a: m.a ?? null,
-      b: m.b ?? null,
-      winner: m.winner ?? null,
-    })));
-  }
   const shuffled = [...teams].sort(() => Math.random() - 0.5);
   const size = nextPow2(shuffled.length);
   const seeded = [...shuffled];
   while (seeded.length < size) seeded.push(null);
   const rounds = [];
   let current = seeded.reduce((acc, _, i, arr) => {
-    if (i % 2 === 0) acc.push({ a: arr[i], b: arr[i + 1], winner: null });
+    if (i % 2 === 0) acc.push({ a: arr[i], b: arr[i + 1] ?? null, winner: null });
     return acc;
   }, []);
   rounds.push(current);
@@ -75,9 +57,43 @@ function buildBracket(teams) {
   return rounds;
 }
 
+// ── Firestore serialization (no nested arrays allowed) ──
+function serializeBracket(rounds) {
+  return rounds.map((matches, ri) => ({
+    roundIndex: ri,
+    matches: matches.map((m, mi) => ({
+      matchIndex: mi,
+      a: m.a ?? null,
+      b: m.b ?? null,
+      winner: m.winner ?? null,
+    })),
+  }));
+}
+
+function deserializeBracket(serialized) {
+  if (!serialized) return [];
+  return serialized.map(round =>
+    round.matches.map(m => ({
+      a: m.a ?? null,
+      b: m.b ?? null,
+      winner: m.winner ?? null,
+    }))
+  );
+}
+
+// ── Helpers ──
 function teamLabel(t) {
   if (!t) return "BYE";
   return `${t.players[0].name.split(" ")[0]} & ${t.players[1].name.split(" ")[0]}`;
+}
+
+function roundLabels(bracketLength) {
+  if (bracketLength === 1) return ["Final"];
+  if (bracketLength === 2) return ["Semifinal", "Final"];
+  if (bracketLength === 3) return ["Quarterfinal", "Semifinal", "Final"];
+  return Array.from({ length: bracketLength }, (_, i) =>
+    i === bracketLength - 1 ? "Final" : i === bracketLength - 2 ? "Semifinal" : `Round ${i + 1}`
+  );
 }
 
 const chipStyle = {
@@ -87,6 +103,7 @@ const chipStyle = {
   C: { background: "#F1EFE8", color: "#5F5E5A" },
 };
 
+// ── Manual pairing UI ──
 function ManualPairing({ players, onDone, onBack }) {
   const [teams, setTeams] = useState([{ id: 1, players: [null, null] }]);
   const usedIds = new Set(teams.flatMap(t => t.players.filter(Boolean).map(p => p.id)));
@@ -131,7 +148,10 @@ function ManualPairing({ players, onDone, onBack }) {
             <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.6rem" }}>
               <span style={{ fontSize: 12, color: "var(--text-hint)" }}>Team {team.id}</span>
               {teams.length > 2 && (
-                <button onClick={() => setTeams(prev => prev.filter((_, i) => i !== ti).map((t, i) => ({ ...t, id: i + 1 })))} style={{ fontSize: 11, color: "var(--text-secondary)", background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>Remove</button>
+                <button onClick={() => setTeams(prev => prev.filter((_, i) => i !== ti).map((t, i) => ({ ...t, id: i + 1 })))}
+                  style={{ fontSize: 11, color: "var(--text-secondary)", background: "none", border: "none", cursor: "pointer", textDecoration: "underline" }}>
+                  Remove
+                </button>
               )}
             </div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 8, alignItems: "center" }}>
@@ -157,14 +177,14 @@ function ManualPairing({ players, onDone, onBack }) {
       </div>
 
       <div style={{ display: "flex", gap: 8 }}>
-        <button onClick={() => setTeams(prev => [...prev, { id: prev.length + 1, players: [null, null] }])} style={{ padding: "10px 16px", fontSize: 13, border: "1px solid var(--border-mid)", borderRadius: 8, background: "transparent", color: "var(--text)", cursor: "pointer" }}>
+        <button onClick={() => setTeams(prev => [...prev, { id: prev.length + 1, players: [null, null] }])}
+          style={{ padding: "10px 16px", fontSize: 13, border: "1px solid var(--border-mid)", borderRadius: 8, background: "transparent", color: "var(--text)", cursor: "pointer" }}>
           + Add team
         </button>
         <button
           onClick={() => onDone(teams.map((t, i) => ({ id: i + 1, players: t.players, avgElo: Math.round((t.players[0].doublesElo + t.players[1].doublesElo) / 2) })))}
           disabled={!allFilled}
-          style={{ flex: 1, padding: 10, fontSize: 14, fontWeight: 500, background: allFilled ? "var(--text)" : "var(--border-mid)", color: allFilled ? "var(--bg)" : "var(--text-hint)", border: "none", borderRadius: 8, cursor: allFilled ? "pointer" : "not-allowed" }}
-        >
+          style={{ flex: 1, padding: 10, fontSize: 14, fontWeight: 500, border: "none", borderRadius: 8, cursor: allFilled ? "pointer" : "not-allowed", background: allFilled ? "var(--text)" : "var(--border-mid)", color: allFilled ? "var(--bg)" : "var(--text-hint)" }}>
           Confirm teams
         </button>
       </div>
@@ -172,16 +192,12 @@ function ManualPairing({ players, onDone, onBack }) {
   );
 }
 
-// ── Live bracket view (read-only or interactive) ──
+// ── Live bracket view ──
 function LiveBracket({ tournament, canAdvance, onAdvance, onArchive }) {
-  const bracket = deserializeBracket(tournament.bracket); // ← add this line
+  const bracket = deserializeBracket(tournament.bracket);
   const { teams, winner: champion } = tournament;
   if (!bracket?.length) return null;
-
-  const labels = bracket.length === 1 ? ["Final"]
-    : bracket.length === 2 ? ["Semifinal", "Final"]
-    : bracket.length === 3 ? ["Quarterfinal", "Semifinal", "Final"]
-    : bracket.map((_, i) => i === bracket.length - 1 ? "Final" : i === bracket.length - 2 ? "Semifinal" : `Round ${i + 1}`);
+  const labels = roundLabels(bracket.length);
 
   return (
     <div>
@@ -213,8 +229,8 @@ function LiveBracket({ tournament, canAdvance, onAdvance, onArchive }) {
                           style={{
                             padding: "8px 10px", fontSize: 12, display: "flex", alignItems: "center", gap: 6,
                             borderTop: ti > 0 ? "1px solid var(--border)" : "none",
-                            background: m.winner === team && team ? "var(--bg-secondary)" : "var(--bg-card)",
-                            fontWeight: m.winner === team && team ? 500 : 400,
+                            background: m.winner && m.winner === team ? "var(--bg-secondary)" : "var(--bg-card)",
+                            fontWeight: m.winner && m.winner === team ? 500 : 400,
                             color: "var(--text)",
                             cursor: canAdvance && !m.winner && team ? "pointer" : "default",
                           }}>
@@ -254,7 +270,7 @@ export default function Tournament({ players, currentUid, isAdmin, activeTournam
   const n = selectedIds.size;
   const canProceed = n >= 4 && n % 2 === 0;
 
-  // ── If there's a live tournament, show it ──
+  // ── Active tournament view ──
   if (activeTournament) {
     async function handleAdvance(roundIdx, matchIdx, side) {
       const rounds = deserializeBracket(activeTournament.bracket);
@@ -271,7 +287,7 @@ export default function Tournament({ players, currentUid, isAdmin, activeTournam
       const isFinal = roundIdx === rounds.length - 1;
       await setDoc(doc(db, "tournaments", "active"), {
         ...activeTournament,
-        bracket: rounds,
+        bracket: serializeBracket(rounds),
         ...(isFinal ? { winner: team, status: "finished" } : {}),
       });
     }
@@ -298,7 +314,7 @@ export default function Tournament({ players, currentUid, isAdmin, activeTournam
             <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
               {activeTournament.status === "finished"
                 ? "Champion decided — archive to start a new one"
-                : isCreator ? "Click a team to advance them" : "Watching live — results update in real time"}
+                : isCreator ? "Click a team to advance them" : "Watching live — updates in real time"}
             </div>
           </div>
           {isCreator && activeTournament.status !== "finished" && (
@@ -308,8 +324,7 @@ export default function Tournament({ players, currentUid, isAdmin, activeTournam
                   await deleteDoc(doc(db, "tournaments", "active"));
                 }
               }}
-              style={{ fontSize: 12, padding: "6px 14px", border: "1px solid #A32D2D", borderRadius: 8, background: "transparent", color: "#A32D2D", cursor: "pointer" }}
-            >
+              style={{ fontSize: 12, padding: "6px 14px", border: "1px solid #A32D2D", borderRadius: 8, background: "transparent", color: "#A32D2D", cursor: "pointer" }}>
               Cancel
             </button>
           )}
@@ -326,7 +341,7 @@ export default function Tournament({ players, currentUid, isAdmin, activeTournam
     );
   }
 
-  // ── No active tournament — show setup ──
+  // ── Setup flow ──
   function toggleSelect(id) {
     setSelectedIds(prev => {
       const next = new Set(prev);
@@ -345,7 +360,7 @@ export default function Tournament({ players, currentUid, isAdmin, activeTournam
       createdAt: serverTimestamp(),
       participants: participantIds,
       teams: finalTeams,
-      bracket: serializeBracket(bracket),  
+      bracket: serializeBracket(bracket),
       winner: null,
     });
     setSaving(false);
@@ -413,8 +428,7 @@ export default function Tournament({ players, currentUid, isAdmin, activeTournam
 
       <button onClick={() => {
         if (pairingMode === "auto") {
-          const sel = players.filter(p => selectedIds.has(p.id));
-          setTeams(autoPair(sel));
+          setTeams(autoPair(players.filter(p => selectedIds.has(p.id))));
           setSetupStep("teams");
         } else {
           setSetupStep("manual");
@@ -475,12 +489,11 @@ export default function Tournament({ players, currentUid, isAdmin, activeTournam
       <button
         onClick={() => handleLaunch(teams)}
         disabled={saving}
-        style={{ width: "100%", padding: 10, fontSize: 14, fontWeight: 500, background: saving ? "var(--border-mid)" : "var(--text)", color: saving ? "var(--text-hint)" : "var(--bg)", border: "none", borderRadius: 8, cursor: saving ? "not-allowed" : "pointer" }}
-      >
+        style={{ width: "100%", padding: 10, fontSize: 14, fontWeight: 500, background: saving ? "var(--border-mid)" : "var(--text)", color: saving ? "var(--text-hint)" : "var(--bg)", border: "none", borderRadius: 8, cursor: saving ? "not-allowed" : "pointer" }}>
         {saving ? "Launching..." : "Launch tournament 🏸"}
       </button>
     </div>
   );
-
+ 
   return null;
 }
