@@ -3,7 +3,7 @@ import { collection, addDoc, onSnapshot, query, where, serverTimestamp, orderBy 
 import { db } from "../firebase";
 import Avatar from "./Avatar";
 
-export default function Matches({ players, currentUid }) {
+export default function Matches({ players, currentUid, groupId }) {
   const [doublesSlots, setDoublesSlots] = useState({ teammate: null, opp1: null, opp2: null });
   const [type, setType] = useState("singles");
   const [selectedIds, setSelectedIds] = useState([]);
@@ -15,7 +15,7 @@ export default function Matches({ players, currentUid }) {
 
   useEffect(() => {
     const q = query(
-      collection(db, "matchRequests"),
+      collection(db, "groups", groupId, "matchRequests"),
       where("players", "array-contains", currentUid),
       orderBy("createdAt", "desc")
     );
@@ -44,7 +44,7 @@ export default function Matches({ players, currentUid }) {
         ? [currentUid, ...selectedIds]
         : [currentUid, doublesSlots.teammate, doublesSlots.opp1, doublesSlots.opp2];
 
-    await addDoc(collection(db, "matchRequests"), {
+    await addDoc(collection(db, "groups", groupId, "matchRequests"), {
         type,
         status: "pending",
         createdBy: currentUid,

@@ -2,15 +2,12 @@ import { useEffect, useState } from "react";
 import { collection, onSnapshot, orderBy, query } from "firebase/firestore";
 import { db } from "../firebase";
 
-export default function TournamentHistory() {
+export default function TournamentHistory({ groupId }) {
   const [history, setHistory] = useState([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const q = query(
-      collection(db, "tournaments", "history", "entries"),
-      orderBy("finishedAt", "desc")
-    );
+    const q = query(collection(db, "groups", groupId, "tournaments", "history", "entries"), orderBy("finishedAt", "desc"));
     const unsub = onSnapshot(q, snap => {
       setHistory(snap.docs.map(d => ({ id: d.id, ...d.data() })));
       setLoading(false);

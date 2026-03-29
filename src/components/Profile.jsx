@@ -1,3 +1,6 @@
+import { useState, useEffect } from "react";
+import { collection, onSnapshot } from "firebase/firestore";
+import { db } from "../firebase";
 import Avatar from "./Avatar";
 
 const chipStyle = {
@@ -56,7 +59,7 @@ function getNextMatch(activeTournament, currentUid) {
   return null;
 }
 
-export default function Profile({ players, currentUid, activeTournament }) {
+export default function Profile({ players, currentUid, activeTournament, groupId }) {
   const p = players.find(x => x.id === currentUid);
   if (!p) return <div style={{ textAlign: "center", padding: "2rem", color: "var(--text-hint)" }}>Loading profile...</div>;
 
@@ -71,6 +74,27 @@ export default function Profile({ players, currentUid, activeTournament }) {
   const dSub = dEntry?.subrank ?? null;
   const winRate = Math.round((p.wins ?? 0) / Math.max((p.wins ?? 0) + (p.losses ?? 0), 1) * 100);
   const nextMatch = getNextMatch(activeTournament, currentUid);
+  const [globalData, setGlobalData] = useState(null);
+  const [globalSinglesRank, setGlobalSinglesRank] = useState(null);
+  const [globalDoublesRank, setGlobalDoublesRank] = useState(null);
+  const [totalGlobalPlayers, setTotalGlobalPlayers] = useState(0);
+
+  useEffect(() => {
+    const unsub = onSnapshot(collection(db, "globalPlayers"), snap => {
+      const all = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      const eligible = all.filter(p => (p.verifiedMatches ?? 0) >= 5);
+      setTotalGlobalPlayers(eligible.length);
+      const me = all.find(x => x.id === currentUid);
+      setGlobalData(me ?? null);
+      if (me && (me.verifiedMatches ?? 0) >= 5) {
+        const sRank = [...eligible].sort((a,b) => (b.globalSinglesElo??0)-(a.globalSinglesElo??0)).findIndex(x=>x.id===currentUid)+1;
+        const dRank = [...eligible].sort((a,b) => (b.globalDoublesElo??0)-(a.globalDoublesElo??0)).findIndex(x=>x.id===currentUid)+1;
+        setGlobalSinglesRank(sRank);
+        setGlobalDoublesRank(dRank);
+      }
+    });
+    return unsub;
+  }, [currentUid]);
 
   return (
     <div>
@@ -85,7 +109,7 @@ export default function Profile({ players, currentUid, activeTournament }) {
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: "1.25rem" }}>
-        {[["Singles", sT, sSub, p.singlesElo], ["Doubles", dT, dSub, p.doublesElo]].map(([label, tier, sub, elo]) => (
+        {[["Singles", sT, sSub, p.singlesElo, globalSinglesRank], ["Doubles", dT, dSub, p.doublesElo, globalDoublesRank]].map(([label, tier, sub, elo, gRank]) => (
           <div key={label} style={{ background: "var(--bg-secondary)", borderRadius: 8, padding: "0.75rem" }}>
             <div style={{ fontSize: 11, color: "var(--text-hint)", marginBottom: 4 }}>{label} rank</div>
             {isUnranked || !tier ? (
@@ -94,6 +118,12 @@ export default function Profile({ players, currentUid, activeTournament }) {
               <span style={{ fontSize: 12, fontWeight: 500, padding: "3px 8px", borderRadius: 20, ...chipStyle[tier] }}>{tier}{sub}</span>
             )}
             <div style={{ fontSize: 12, color: "var(--text-hint)", marginTop: 6 }}>{elo} ELO</div>
+            {gRank && (
+              <div style={{ fontSize: 11, color: "#90c4f9", marginTop: 4 }}>🌍 Global #{gRank} of {totalGlobalPlayers}</div>
+            )}
+            {globalData && (globalData.verifiedMatches ?? 0) < 5 && (
+              <div style={{ fontSize: 11, color: "var(--text-hint)", marginTop: 4 }}>{5 - (globalData.verifiedMatches ?? 0)} more verified matches for global rank</div>
+            )}
           </div>
         ))}
       </div>

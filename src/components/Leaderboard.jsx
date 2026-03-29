@@ -78,7 +78,7 @@ export default function Leaderboard({ players }) {
                   <div style={{ fontSize: 12, color: "var(--text-hint)" }}>{p.wins ?? 0}W · {p.losses ?? 0}L</div>
                 </div>
                 <span style={{ fontSize: 12, fontWeight: 500, padding: "3px 8px", borderRadius: 20, ...chipStyle[tier] }}>{tier}{p.subrank}</span>
-                <div style={{ fontSize: 14, fontWeight: 500, minWidth: 44, textAlign: "right", color: "var(--text)" }}>{eloFn(p)}</div>
+                <div style={{ fontSize: 14, fontWeight: 500, minWidth: 36, textAlign: "right", color: "var(--text)" }}>{eloFn(p)}</div>
               </div>
             ))}
           </div>

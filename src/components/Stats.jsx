@@ -67,7 +67,7 @@ function GroupStats({ players }) {
   );
 }
 
-function HeadToHead({ players }) {
+function HeadToHead({ players, groupId }) {
   const [p1Id, setP1Id] = useState("");
   const [p2Id, setP2Id] = useState("");
   const [matches, setMatches] = useState([]);
@@ -77,7 +77,7 @@ function HeadToHead({ players }) {
     if (!p1Id || !p2Id) return;
     setLoading(true);
     const q = query(
-      collection(db, "matchRequests"),
+      collection(db, "groups", groupId, "matchRequests"),
       where("status", "==", "confirmed"),
       where("players", "array-contains", p1Id),
     );
@@ -186,7 +186,7 @@ function HeadToHead({ players }) {
   );
 }
 
-export default function Stats({ players }) {
+export default function Stats({ players, groupId }) {
   const [subtab, setSubtab] = useState("group");
 
   return (
@@ -202,7 +202,7 @@ export default function Stats({ players }) {
         ))}
       </div>
       {subtab === "group" && <GroupStats players={players} />}
-      {subtab === "h2h" && <HeadToHead players={players} />}
+      {subtab === "h2h" && <HeadToHead players={players} groupId={groupId} />}
     </div>
   );
 }

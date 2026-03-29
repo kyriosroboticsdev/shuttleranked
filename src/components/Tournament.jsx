@@ -258,7 +258,7 @@ function LiveBracket({ tournament, canAdvance, onAdvance, onArchive }) {
 }
 
 // ── Main Tournament component ──
-export default function Tournament({ players, currentUid, isAdmin, activeTournament }) {
+export default function Tournament({ players, currentUid, isAdmin, activeTournament, groupId }) {
   const [setupStep, setSetupStep] = useState("select");
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [pairingMode, setPairingMode] = useState("auto");
@@ -317,7 +317,7 @@ export default function Tournament({ players, currentUid, isAdmin, activeTournam
       ));
     }
 
-    await setDoc(doc(db, "tournaments", "active"), {
+    await setDoc(doc(db, "groups", groupId, "tournaments", "active"), {
       ...activeTournament,
       bracket: serializeBracket(rounds),
       ...(isFinal ? { winner, status: "finished" } : {}),
@@ -355,11 +355,11 @@ export default function Tournament({ players, currentUid, isAdmin, activeTournam
           avgElo: activeTournament.winner.avgElo ?? 0,
         } : null,
       };
-      await addDoc(collection(db, "tournaments", "history", "entries"), archiveData);
-      await deleteDoc(doc(db, "tournaments", "active"));
+      await addDoc(collection(db, "groups", groupId, "tournaments", "history", "entries"), archiveData);
+      await deleteDoc(doc(db, "groups", groupId, "tournaments", "active"));
     } catch (e) {
       console.error("Archive failed:", e);
-      await deleteDoc(doc(db, "tournaments", "active"));
+      await deleteDoc(doc(db, "groups", groupId, "tournaments", "active"));
     }
     setSaving(false);
   }
@@ -368,7 +368,7 @@ export default function Tournament({ players, currentUid, isAdmin, activeTournam
     setSaving(true);
     const bracket = buildBracket(finalTeams);
     const participantIds = finalTeams.flatMap(t => t.players.map(p => p.id));
-    await setDoc(doc(db, "tournaments", "active"), {
+    await setDoc(doc(db, "groups", groupId, "tournaments", "active"), {
       status: "active",
       createdBy: currentUid,
       createdAt: serverTimestamp(),
@@ -419,7 +419,7 @@ export default function Tournament({ players, currentUid, isAdmin, activeTournam
               <button
                 onClick={async () => {
                   if (window.confirm("Cancel the current tournament?")) {
-                    await deleteDoc(doc(db, "tournaments", "active"));
+                    await deleteDoc(doc(db, "groups", groupId, "tournaments", "active"));
                   }
                 }}
                 style={{ fontSize: 12, padding: "6px 14px", border: "1px solid #A32D2D", borderRadius: 8, background: "transparent", color: "#A32D2D", cursor: "pointer" }}>
@@ -543,7 +543,7 @@ export default function Tournament({ players, currentUid, isAdmin, activeTournam
         </div>
         <button onClick={() => setSetupStep(pairingMode === "manual" ? "manual" : "select")} style={{ fontSize: 12, padding: "6px 14px", border: "1px solid var(--border-mid)", borderRadius: 8, background: "transparent", color: "var(--text)", cursor: "pointer" }}>Back</button>
       </div>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(2, minmax(0, 1fr))", gap: 10, marginBottom: "1rem" }}>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 10, marginBottom: "1rem" }}>
         {teams.map(t => (
           <div key={t.id} style={{ background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 12, padding: "1rem" }}>
             <div style={{ display: "flex", justifyContent: "space-between", fontSize: 11, color: "var(--text-hint)", marginBottom: "0.6rem" }}>
