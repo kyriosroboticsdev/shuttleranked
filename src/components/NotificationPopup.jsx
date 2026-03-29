@@ -1,6 +1,18 @@
-import { doc, updateDoc, arrayUnion, deleteDoc } from "firebase/firestore";
+import { doc, updateDoc, arrayUnion, deleteDoc, addDoc, collection, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase";
 import { useState } from "react";
+
+async function writeEloHistory(playerIds, players, type) {
+  await Promise.all(playerIds.map(id => {
+    const p = players.find(x => x.id === id);
+    if (!p) return Promise.resolve();
+    return addDoc(collection(db, "players", id, "eloHistory"), {
+      singlesElo: p.singlesElo,
+      doublesElo: p.doublesElo,
+      timestamp: serverTimestamp(),
+    });
+  }));
+}
 
 function calcElo(wElo, lElo, sets) {
   const exp = 1 / (1 + Math.pow(10, (lElo - wElo) / 400));
@@ -101,6 +113,9 @@ export default function NotificationPopup({ requests, currentUid, players, onClo
           losses: (p.losses ?? 0) + 1,
         })),
       ]);
+    
+      await writeEloHistory(req.players, players, type);
+
 
       await updateDoc(doc(db, "matchRequests", req.id), {
         confirmedBy: newConfirmed,

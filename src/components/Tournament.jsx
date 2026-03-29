@@ -306,11 +306,13 @@ export default function Tournament({ players, currentUid, isAdmin, activeTournam
         })),
       ];
 
-      await Promise.all(updates.map(u =>
-        updateDoc(doc(db, "players", u.id), {
-          doublesElo: u.doublesElo,
-          ...(u.wins !== undefined ? { wins: u.wins } : {}),
-          ...(u.losses !== undefined ? { losses: u.losses } : {}),
+      await Promise.all([...winner.players, ...loser.players].map(p =>
+        addDoc(collection(db, "players", p.id, "eloHistory"), {
+          singlesElo: p.singlesElo,
+          doublesElo: type === "doubles"
+            ? (winner.players.includes(p) ? p.doublesElo + change : Math.max(p.doublesElo - change, 800))
+            : p.doublesElo,
+          timestamp: serverTimestamp(),
         })
       ));
     }

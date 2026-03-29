@@ -6,7 +6,7 @@ import { useTheme } from "./context/ThemeContext";
 import Leaderboard from "./components/Leaderboard";
 import Tournament from "./components/Tournament";
 import TournamentHistory from "./components/TournamentHistory";
-import AdminPanel from "./components/AdminPanel";
+import Stats from "./components/Stats";
 import Profile from "./components/Profile";
 import Settings from "./components/Settings";
 import Matches from "./components/Matches";
@@ -114,13 +114,13 @@ export default function App() {
 
   const isAdmin = playerDoc?.isAdmin;
   const tabs = [
-  { id: "leaderboard", label: "Leaderboard" },
-  { id: "tournament", label: activeTournament ? "🏸 Live" : "Tournament" },
-  { id: "history", label: "History" },
-  { id: "matches", label: pendingRequests.length > 0 ? `Matches (${pendingRequests.length})` : "Matches" },
-  ...(isAdmin ? [{ id: "admin", label: "Record Match" }] : []),
-  { id: "profile", label: "My Profile" },
-  { id: "settings", label: "Settings" },
+    { id: "leaderboard", label: "Leaderboard" },
+    { id: "tournament", label: activeTournament ? "🏸 Live" : "Tournament" },
+    { id: "history", label: "History" },
+    { id: "matches", label: pendingRequests.length > 0 ? `Matches (${pendingRequests.length})` : "Matches" },
+    { id: "stats", label: "Stats" },
+    { id: "profile", label: "My Profile" },
+    { id: "settings", label: "Settings" },
   ];
 
   return (
@@ -172,7 +172,10 @@ export default function App() {
           onClose={() => setShowPopup(false)}
         />
       )}
-      {view === "admin" && isAdmin && <AdminPanel players={players} currentUid={user.uid} />}
+      {view === "stats" && <Stats players={players} />}
+      
+      {view === "settings" && <Settings user={user} players={players} onDeleted={() => { setUser(null); setView("leaderboard"); }} />}
+        
       {view === "profile" && (
         <Profile
           players={players}
