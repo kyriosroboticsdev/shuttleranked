@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
-import { doc, getDoc, setDoc, collection, onSnapshot } from "firebase/firestore";
+import { doc, getDoc, setDoc, collection, onSnapshot, query, where } from "firebase/firestore";
 import { auth, provider, db } from "./firebase";
 import { useTheme } from "./context/ThemeContext";
 import Leaderboard from "./components/Leaderboard";
@@ -9,6 +9,8 @@ import TournamentHistory from "./components/TournamentHistory";
 import AdminPanel from "./components/AdminPanel";
 import Profile from "./components/Profile";
 import Settings from "./components/Settings";
+import Matches from "./components/Matches";
+import NotificationPopup from "./components/NotificationPopup";
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -59,6 +61,24 @@ export default function App() {
     return unsub;
   }, []);
 
+  const [pendingRequests, setPendingRequests] = useState([]);
+  const [showPopup, setShowPopup] = useState(false);
+
+  useEffect(() => {
+    if (!user) return;
+    const q = query(
+      collection(db, "matchRequests"),
+      where("players", "array-contains", user.uid),
+      where("status", "in", ["pending", "accepted", "score_entered"])
+    );
+    const unsub = onSnapshot(q, snap => {
+      const reqs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+      setPendingRequests(reqs);
+      if (reqs.length > 0) setShowPopup(true);
+    });
+    return unsub;
+  }, [user]);
+
   async function handleLogin() {
     await signInWithPopup(auth, provider);
   }
@@ -94,12 +114,13 @@ export default function App() {
 
   const isAdmin = playerDoc?.isAdmin;
   const tabs = [
-    { id: "leaderboard", label: "Leaderboard" },
-    { id: "tournament", label: activeTournament ? "🏸 Live" : "Tournament" },
-    { id: "history", label: "History" },
-    ...(isAdmin ? [{ id: "admin", label: "Record Match" }] : []),
-    { id: "profile", label: "My Profile" },
-    { id: "settings", label: "Settings" },
+  { id: "leaderboard", label: "Leaderboard" },
+  { id: "tournament", label: activeTournament ? "🏸 Live" : "Tournament" },
+  { id: "history", label: "History" },
+  { id: "matches", label: pendingRequests.length > 0 ? `Matches (${pendingRequests.length})` : "Matches" },
+  ...(isAdmin ? [{ id: "admin", label: "Record Match" }] : []),
+  { id: "profile", label: "My Profile" },
+  { id: "settings", label: "Settings" },
   ];
 
   return (
@@ -142,6 +163,15 @@ export default function App() {
         />
       )}
       {view === "history" && <TournamentHistory />}
+      {view === "matches" && <Matches players={players} currentUid={user.uid} />}
+      {showPopup && pendingRequests.length > 0 && (
+        <NotificationPopup
+          requests={pendingRequests}
+          currentUid={user.uid}
+          players={players}
+          onClose={() => setShowPopup(false)}
+        />
+      )}
       {view === "admin" && isAdmin && <AdminPanel players={players} currentUid={user.uid} />}
       {view === "profile" && (
         <Profile

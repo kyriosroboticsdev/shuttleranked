@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { doc, setDoc, deleteDoc, addDoc, collection, serverTimestamp } from "firebase/firestore";
+import { doc, setDoc, deleteDoc, addDoc, updateDoc, collection, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase";
 
 // ── Tier assignment ──
@@ -270,84 +270,96 @@ export default function Tournament({ players, currentUid, isAdmin, activeTournam
   const n = selectedIds.size;
   const canProceed = n >= 4 && n % 2 === 0;
 
-  // ── Active tournament view ──
-  if (activeTournament) {
-    async function handleAdvance(roundIdx, matchIdx, side) {
-      const rounds = deserializeBracket(activeTournament.bracket);
-      const match = rounds[roundIdx][matchIdx];
-      if (match.winner) return;
-      const team = side === "a" ? match.a : match.b;
-      if (!team) return;
-      match.winner = team;
-      if (roundIdx + 1 < rounds.length) {
-        const next = rounds[roundIdx + 1][Math.floor(matchIdx / 2)];
-        if (matchIdx % 2 === 0) next.a = team;
-        else next.b = team;
-      }
-      const isFinal = roundIdx === rounds.length - 1;
-      await setDoc(doc(db, "tournaments", "active"), {
-        ...activeTournament,
-        bracket: serializeBracket(rounds),
-        ...(isFinal ? { winner: team, status: "finished" } : {}),
-      });
+  // ── These must be at top level, not inside if blocks ──
+  async function handleAdvance(roundIdx, matchIdx, side) {
+    if (!activeTournament) return;
+    const rounds = deserializeBracket(activeTournament.bracket);
+    const match = rounds[roundIdx][matchIdx];
+    if (match.winner) return;
+    const winner = side === "a" ? match.a : match.b;
+    const loser = side === "a" ? match.b : match.a;
+    if (!winner) return;
+    match.winner = winner;
+    if (roundIdx + 1 < rounds.length) {
+      const next = rounds[roundIdx + 1][Math.floor(matchIdx / 2)];
+      if (matchIdx % 2 === 0) next.a = winner;
+      else next.b = winner;
+    }
+    const isFinal = roundIdx === rounds.length - 1;
+
+    if (loser) {
+      const winnerAvg = winner.avgElo ?? winner.players.reduce((s, p) => s + p.doublesElo, 0) / winner.players.length;
+      const loserAvg = loser.avgElo ?? loser.players.reduce((s, p) => s + p.doublesElo, 0) / loser.players.length;
+      const exp = 1 / (1 + Math.pow(10, (loserAvg - winnerAvg) / 400));
+      const change = Math.max(Math.round(32 * (1 - exp)), 4);
+
+      const updates = [
+        ...winner.players.map(p => ({
+          id: p.id,
+          doublesElo: (p.doublesElo ?? 1000) + change,
+          wins: (p.wins ?? 0) + 1,
+        })),
+        ...loser.players.map(p => ({
+          id: p.id,
+          doublesElo: Math.max((p.doublesElo ?? 1000) - change, 800),
+          losses: (p.losses ?? 0) + 1,
+        })),
+      ];
+
+      await Promise.all(updates.map(u =>
+        updateDoc(doc(db, "players", u.id), {
+          doublesElo: u.doublesElo,
+          ...(u.wins !== undefined ? { wins: u.wins } : {}),
+          ...(u.losses !== undefined ? { losses: u.losses } : {}),
+        })
+      ));
     }
 
-    async function handleArchive() {
-      setSaving(true);
-      await addDoc(collection(db, "tournaments", "history", "entries"), {
-        ...activeTournament,
-        finishedAt: serverTimestamp(),
-      });
-      await deleteDoc(doc(db, "tournaments", "active"));
-      setSaving(false);
-    }
-
-    const isCreator = activeTournament.createdBy === currentUid || isAdmin;
-
-    return (
-      <div>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
-          <div>
-            <div style={{ fontSize: 15, fontWeight: 500, color: "var(--text)" }}>
-              {activeTournament.status === "finished" ? "Tournament finished" : "Live tournament"}
-            </div>
-            <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
-              {activeTournament.status === "finished"
-                ? "Champion decided — archive to start a new one"
-                : isCreator ? "Click a team to advance them" : "Watching live — updates in real time"}
-            </div>
-          </div>
-          {isCreator && activeTournament.status !== "finished" && (
-            <button
-              onClick={async () => {
-                if (window.confirm("Cancel the current tournament?")) {
-                  await deleteDoc(doc(db, "tournaments", "active"));
-                }
-              }}
-              style={{ fontSize: 12, padding: "6px 14px", border: "1px solid #A32D2D", borderRadius: 8, background: "transparent", color: "#A32D2D", cursor: "pointer" }}>
-              Cancel
-            </button>
-          )}
-        </div>
-
-        <LiveBracket
-          tournament={activeTournament}
-          canAdvance={isCreator && activeTournament.status !== "finished"}
-          onAdvance={handleAdvance}
-          onArchive={handleArchive}
-        />
-        {saving && <div style={{ textAlign: "center", padding: "1rem", color: "var(--text-secondary)", fontSize: 13 }}>Archiving...</div>}
-      </div>
-    );
+    await setDoc(doc(db, "tournaments", "active"), {
+      ...activeTournament,
+      bracket: serializeBracket(rounds),
+      ...(isFinal ? { winner, status: "finished" } : {}),
+    });
   }
 
-  // ── Setup flow ──
-  function toggleSelect(id) {
-    setSelectedIds(prev => {
-      const next = new Set(prev);
-      next.has(id) ? next.delete(id) : next.add(id);
-      return next;
-    });
+  async function handleArchive() {
+    if (!activeTournament) return;
+    setSaving(true);
+    try {
+      const archiveData = {
+        status: "finished",
+        createdBy: activeTournament.createdBy ?? null,
+        createdAt: activeTournament.createdAt ?? null,
+        participants: activeTournament.participants ?? [],
+        finishedAt: serverTimestamp(),
+        teams: (activeTournament.teams ?? []).map(t => ({
+          id: t.id,
+          avgElo: t.avgElo ?? 0,
+          playerNames: t.players.map(p => p.name),
+          playerIds: t.players.map(p => p.id),
+        })),
+        bracketSummary: (activeTournament.bracket ?? []).map(round => ({
+          roundIndex: round.roundIndex,
+          matches: round.matches.map(m => ({
+            matchIndex: m.matchIndex,
+            teamA: m.a ? m.a.players.map(p => p.name).join(" & ") : null,
+            teamB: m.b ? m.b.players.map(p => p.name).join(" & ") : null,
+            winner: m.winner ? m.winner.players.map(p => p.name).join(" & ") : null,
+          })),
+        })),
+        winner: activeTournament.winner ? {
+          playerNames: activeTournament.winner.players.map(p => p.name),
+          playerIds: activeTournament.winner.players.map(p => p.id),
+          avgElo: activeTournament.winner.avgElo ?? 0,
+        } : null,
+      };
+      await addDoc(collection(db, "tournaments", "history", "entries"), archiveData);
+      await deleteDoc(doc(db, "tournaments", "active"));
+    } catch (e) {
+      console.error("Archive failed:", e);
+      await deleteDoc(doc(db, "tournaments", "active"));
+    }
+    setSaving(false);
   }
 
   async function handleLaunch(finalTeams) {
@@ -366,6 +378,71 @@ export default function Tournament({ players, currentUid, isAdmin, activeTournam
     setSaving(false);
   }
 
+  function toggleSelect(id) {
+    setSelectedIds(prev => {
+      const next = new Set(prev);
+      next.has(id) ? next.delete(id) : next.add(id);
+      return next;
+    });
+  }
+
+  // ── Active tournament view ──
+  if (activeTournament) {
+    const isCreator = activeTournament.createdBy === currentUid || isAdmin;
+    const isFinished = activeTournament.status === "finished";
+
+    return (
+      <div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "1rem" }}>
+          <div>
+            <div style={{ fontSize: 15, fontWeight: 500, color: "var(--text)" }}>
+              {isFinished ? "Tournament finished" : "Live tournament"}
+            </div>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)" }}>
+              {isFinished
+                ? "Champion decided — archive to start a new one"
+                : isCreator ? "Click a team to advance them" : "Watching live — updates in real time"}
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8 }}>
+            {isFinished && isCreator && (
+              <button
+                onClick={handleArchive}
+                disabled={saving}
+                style={{ fontSize: 13, padding: "8px 18px", fontWeight: 500, border: "none", borderRadius: 8, background: saving ? "var(--border-mid)" : "var(--text)", color: saving ? "var(--text-hint)" : "var(--bg)", cursor: saving ? "not-allowed" : "pointer" }}>
+                {saving ? "Archiving..." : "Archive & continue →"}
+              </button>
+            )}
+            {!isFinished && isCreator && (
+              <button
+                onClick={async () => {
+                  if (window.confirm("Cancel the current tournament?")) {
+                    await deleteDoc(doc(db, "tournaments", "active"));
+                  }
+                }}
+                style={{ fontSize: 12, padding: "6px 14px", border: "1px solid #A32D2D", borderRadius: 8, background: "transparent", color: "#A32D2D", cursor: "pointer" }}>
+                Cancel
+              </button>
+            )}
+          </div>
+        </div>
+
+        <LiveBracket
+          tournament={activeTournament}
+          canAdvance={isCreator && !isFinished}
+          onAdvance={handleAdvance}
+          onArchive={handleArchive}
+        />
+        {saving && (
+          <div style={{ textAlign: "center", padding: "1rem", color: "var(--text-secondary)", fontSize: 13 }}>
+            Archiving tournament...
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  // ── Setup flow ──
   if (setupStep === "select") return (
     <div style={{ background: "var(--bg-secondary)", borderRadius: 12, padding: "1.25rem", border: "1px solid var(--border)" }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: "0.75rem" }}>
@@ -494,6 +571,6 @@ export default function Tournament({ players, currentUid, isAdmin, activeTournam
       </button>
     </div>
   );
- 
+
   return null;
 }
