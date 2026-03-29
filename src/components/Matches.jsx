@@ -1,8 +1,10 @@
 import { useState, useEffect } from "react";
 import { collection, addDoc, onSnapshot, query, where, serverTimestamp, orderBy } from "firebase/firestore";
 import { db } from "../firebase";
+import Avatar from "./Avatar";
 
 export default function Matches({ players, currentUid }) {
+  const [doublesSlots, setDoublesSlots] = useState({ teammate: null, opp1: null, opp2: null });
   const [type, setType] = useState("singles");
   const [selectedIds, setSelectedIds] = useState([]);
   const [requests, setRequests] = useState([]);
@@ -30,24 +32,31 @@ export default function Matches({ players, currentUid }) {
   }
 
   const maxSelectable = type === "singles" ? 1 : 3;
-  const canSend = selectedIds.length === maxSelectable;
+  const canSend = type === "singles"
+    ? selectedIds.length === 1
+    : Object.values(doublesSlots).every(v => v !== null);
 
   
   async function sendRequest() {
     if (!canSend) return;
     setSending(true);
+    const playersList = type === "singles"
+        ? [currentUid, ...selectedIds]
+        : [currentUid, doublesSlots.teammate, doublesSlots.opp1, doublesSlots.opp2];
+
     await addDoc(collection(db, "matchRequests"), {
-      type,
-      status: "pending",
-      createdBy: currentUid,
-      createdAt: serverTimestamp(),
-      players: [currentUid, ...selectedIds],
-      acceptedBy: [currentUid],
-      sets: null,
-      scoreEnteredBy: null,
-      confirmedBy: [],
+        type,
+        status: "pending",
+        createdBy: currentUid,
+        createdAt: serverTimestamp(),
+        players: playersList,
+        acceptedBy: [currentUid],
+        sets: null,
+        scoreEnteredBy: null,
+        confirmedBy: [],
     });
     setSelectedIds([]);
+    setDoublesSlots({ teammate: null, opp1: null, opp2: null });
     setStatus("Challenge sent!");
     setTimeout(() => setStatus(""), 3000);
     setSending(false);
@@ -82,57 +91,85 @@ export default function Matches({ players, currentUid }) {
           ))}
         </div>
 
-        <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: "0.75rem" }}>
-          {type === "singles" ? "Select 1 opponent" : "Select 3 players (you + 1 teammate vs 2 opponents)"}
-        </div>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: "1rem" }}>
-          {others.map(p => {
-            const sel = selectedIds.includes(p.id);
-            const disabled = !sel && selectedIds.length >= maxSelectable;
+        {type === "singles" ? (
+            <>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: "0.75rem" }}>Select your opponent</div>
+            <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: "1rem" }}>
+            {others.map(p => {
+                const sel = selectedIds.includes(p.id);
+                const disabled = !sel && selectedIds.length >= 1;
+                return (
+                <div key={p.id} onClick={() => !disabled && togglePlayer(p.id)} style={{
+                    display: "flex", alignItems: "center", gap: 12, padding: "10px 12px",
+                    border: sel ? "1.5px solid #185FA5" : "1px solid var(--border)",
+                    borderRadius: 8, background: sel ? "#1a2e40" : "var(--bg-card)",
+                    cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1,
+                }}>
+                    <Avatar player={p} size={32} fontSize={12} />
+                    <div style={{ flex: 1 }}>
+                    <div style={{ fontSize: 14, fontWeight: 500, color: "var(--text)" }}>{p.name}</div>
+                    <div style={{ fontSize: 12, color: "var(--text-hint)" }}>{p.singlesElo} singles ELO</div>
+                    </div>
+                    <div style={{ width: 20, height: 20, borderRadius: "50%", border: sel ? "none" : "1.5px solid var(--border-mid)", background: sel ? "#185FA5" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: "#fff" }}>
+                    {sel ? "✕" : ""}
+                    </div>
+                </div>
+                );
+            })}
+            </div>
+        </>
+        ) : (
+        <>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: "0.75rem" }}>Select your teammate and opponents</div>
+            {[
+            { label: "Your teammate", key: "teammate", max: 1 },
+            { label: "Opponent 1", key: "opp1", max: 1 },
+            { label: "Opponent 2", key: "opp2", max: 1 },
+            ].map(({ label, key }) => {
+            const otherKeys = ["teammate", "opp1", "opp2"].filter(k => k !== key);
+            const takenIds = otherKeys.flatMap(k => doublesSlots[k] ? [doublesSlots[k]] : []);
             return (
-              <div key={p.id} onClick={() => !disabled && togglePlayer(p.id)} style={{
-                display: "flex", alignItems: "center", gap: 12, padding: "10px 12px",
-                border: sel ? "1.5px solid #185FA5" : "1px solid var(--border)",
-                borderRadius: 8, background: sel ? "#1a2e40" : "var(--bg-card)",
-                cursor: disabled ? "not-allowed" : "pointer", opacity: disabled ? 0.5 : 1,
-              }}>
-                <div style={{ width: 32, height: 32, borderRadius: "50%", background: "var(--bg-secondary)", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 500, color: "var(--text)" }}>
-                  {p.name?.split(" ").map(w => w[0]).join("")}
+                <div key={key} style={{ marginBottom: "0.75rem" }}>
+                <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 4 }}>{label}</div>
+                <select
+                    value={doublesSlots[key] ?? ""}
+                    onChange={e => setDoublesSlots(prev => ({ ...prev, [key]: e.target.value || null }))}
+                >
+                    <option value="">Select player</option>
+                    {others
+                    .filter(p => !takenIds.includes(p.id))
+                    .map(p => <option key={p.id} value={p.id}>{p.name} ({p.doublesElo} ELO)</option>)
+                    }
+                </select>
                 </div>
-                <div style={{ flex: 1 }}>
-                  <div style={{ fontSize: 14, fontWeight: 500, color: "var(--text)" }}>{p.name}</div>
-                  <div style={{ fontSize: 12, color: "var(--text-hint)" }}>
-                    {type === "singles" ? p.singlesElo : p.doublesElo} {type} ELO
-                  </div>
-                </div>
-                <div style={{ width: 20, height: 20, borderRadius: "50%", border: sel ? "none" : "1.5px solid var(--border-mid)", background: sel ? "#185FA5" : "transparent", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, color: "#fff" }}>
-                  {sel ? "✕" : ""}
-                </div>
-              </div>
             );
-          })}
-        </div>
-
-        {selectedIds.length > 0 && (
-          <button
-            onClick={() => setSelectedIds([])}
-            style={{ fontSize: 12, color: "var(--text-secondary)", background: "none", border: "none", cursor: "pointer", textDecoration: "underline", marginBottom: "0.5rem", display: "block" }}
-          >
-            Clear selection
-          </button>
+            })}
+        </>
         )}
 
-        {status && <div style={{ fontSize: 13, color: "#3B6D11", marginBottom: "0.5rem" }}>{status}</div>}
+        {(selectedIds.length > 0 || Object.values(doublesSlots).some(v => v !== null)) && (
+            <button
+                onClick={() => { setSelectedIds([]); setDoublesSlots({ teammate: null, opp1: null, opp2: null }); }}
+                style={{ fontSize: 12, color: "var(--text-secondary)", background: "none", border: "none", cursor: "pointer", textDecoration: "underline", marginBottom: "0.5rem", display: "block" }}
+            >
+                Clear selection
+            </button>
+            )}
 
-        <button onClick={sendRequest} disabled={!canSend || sending} style={{
-          width: "100%", padding: 10, fontSize: 14, fontWeight: 500,
-          background: canSend ? "var(--text)" : "var(--border-mid)",
-          color: canSend ? "var(--bg)" : "var(--text-hint)",
-          border: "none", borderRadius: 8, cursor: canSend ? "pointer" : "not-allowed",
-        }}>
-          {sending ? "Sending..." : `Challenge ${selectedIds.length > 0 ? selectedIds.map(id => getName(id).split(" ")[0]).join(", ") : "..."}`}
-        </button>
+            {status && <div style={{ fontSize: 13, color: "#3B6D11", marginBottom: "0.5rem" }}>{status}</div>}
+
+            <button onClick={sendRequest} disabled={!canSend || sending} style={{
+            width: "100%", padding: 10, fontSize: 14, fontWeight: 500,
+            background: canSend ? "var(--text)" : "var(--border-mid)",
+            color: canSend ? "var(--bg)" : "var(--text-hint)",
+            border: "none", borderRadius: 8, cursor: canSend ? "pointer" : "not-allowed",
+            }}>
+            {sending ? "Sending..." : type === "singles"
+                ? `Challenge ${selectedIds.length > 0 ? selectedIds.map(id => getName(id).split(" ")[0]).join(", ") : "..."}`
+                : canSend
+                ? `Challenge ${getName(doublesSlots.opp1).split(" ")[0]} & ${getName(doublesSlots.opp2).split(" ")[0]}`
+                : "Select all players..."}
+            </button>
       </div>
 
       {/* ── Active requests ── */}

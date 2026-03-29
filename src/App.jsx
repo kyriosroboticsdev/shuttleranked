@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { onAuthStateChanged, signInWithPopup, signOut } from "firebase/auth";
-import { doc, getDoc, setDoc, collection, onSnapshot, query, where } from "firebase/firestore";
+import { doc, getDoc, setDoc, updateDoc, collection, onSnapshot, query, where } from "firebase/firestore";
 import { auth, provider, db } from "./firebase";
 import { useTheme } from "./context/ThemeContext";
 import Leaderboard from "./components/Leaderboard";
@@ -27,17 +27,23 @@ export default function App() {
         const ref = doc(db, "players", u.uid);
         const snap = await getDoc(ref);
         if (!snap.exists()) {
-          await setDoc(ref, {
-            name: u.displayName,
-            email: u.email,
-            singlesElo: 1000,
-            doublesElo: 1000,
-            wins: 0,
-            losses: 0,
-            isAdmin: false,
-          });
+          if (!snap.exists()) {
+            await setDoc(ref, {
+              name: u.displayName,
+              email: u.email,
+              photoURL: u.photoURL ?? null,
+              singlesElo: 1000,
+              doublesElo: 1000,
+              wins: 0,
+              losses: 0,
+              isAdmin: false,
+            });
+          }
         }
         const fresh = await getDoc(ref);
+        if (u.photoURL && fresh.data()?.photoURL !== u.photoURL) {
+          await updateDoc(ref, { photoURL: u.photoURL });
+        }
         setPlayerDoc({ id: u.uid, ...fresh.data() });
       } else {
         setUser(null);
