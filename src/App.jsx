@@ -173,9 +173,7 @@ export default function App() {
         />
       )}
       {view === "stats" && <Stats players={players} />}
-      
-      {view === "settings" && <Settings user={user} players={players} onDeleted={() => { setUser(null); setView("leaderboard"); }} />}
-        
+
       {view === "profile" && (
         <Profile
           players={players}
@@ -183,7 +181,7 @@ export default function App() {
           activeTournament={activeTournament}
         />
       )}
-      {view === "settings" && <Settings user={user} onDeleted={() => { setUser(null); setView("leaderboard"); }} />}
+      {view === "settings" && <Settings user={user} players={players} onDeleted={() => { setUser(null); setView("leaderboard"); }} />}
     </div>
   );
 }
