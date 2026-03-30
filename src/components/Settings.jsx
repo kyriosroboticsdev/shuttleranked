@@ -1,9 +1,150 @@
 import { useState, useEffect } from "react";
 import { deleteUser, updateProfile } from "firebase/auth";
-import { doc, deleteDoc, updateDoc, collection, onSnapshot, orderBy, query, getDocs, writeBatch, getDoc } from "firebase/firestore";
+import { doc, deleteDoc, updateDoc, collection, onSnapshot, orderBy, query, getDocs, writeBatch, getDoc, addDoc, serverTimestamp } from "firebase/firestore";
 import { auth, db } from "../firebase";
 import { useTheme } from "../context/ThemeContext";
 import { LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer, Legend } from "recharts";
+import emailjs from "@emailjs/browser";
+
+  // ── Invite link generator ──
+  function InviteLinkGenerator({ groupId, groupDoc, userId }) {
+    const [link, setLink] = useState("");
+    const [copied, setCopied] = useState(false);
+    const [generating, setGenerating] = useState(false);
+
+    async function generate() {
+      setGenerating(true);
+      const token = Math.random().toString(36).substring(2, 18);
+      const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+      await addDoc(fbCollection(db, "invites"), {
+        token,
+        groupId,
+        groupName: groupDoc?.name ?? "Badminton Group",
+        createdBy: userId,
+        createdAt: serverTimestamp(),
+        expiresAt,
+        used: false,
+      });
+      // Store token as doc ID instead for easy lookup
+      // Actually use setDoc with token as ID:
+      const { setDoc, doc: fsDoc } = await import("firebase/firestore");
+      await setDoc(fsDoc(db, "invites", token), {
+        groupId,
+        groupName: groupDoc?.name ?? "Badminton Group",
+        createdBy: userId,
+        createdAt: serverTimestamp(),
+        expiresAt,
+        used: false,
+      });
+      const url = `${window.location.origin}/invite/${token}`;
+      setLink(url);
+      setGenerating(false);
+    }
+
+    function copy() {
+      navigator.clipboard.writeText(link);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+
+    return (
+      <div>
+        {link ? (
+          <div style={{ display: "flex", gap: 6 }}>
+            <input readOnly value={link} style={{ flex: 1, fontSize: 12 }} />
+            <button onClick={copy} style={{ padding: "8px 12px", fontSize: 12, border: "1px solid var(--border-mid)", borderRadius: 8, background: copied ? "#EAF3DE" : "transparent", color: copied ? "#27500A" : "var(--text)", cursor: "pointer", whiteSpace: "nowrap" }}>
+              {copied ? "Copied!" : "Copy"}
+            </button>
+          </div>
+        ) : (
+          <button onClick={generate} disabled={generating} style={{ padding: "8px 16px", fontSize: 13, fontWeight: 500, background: "var(--text)", color: "var(--bg)", border: "none", borderRadius: 8, cursor: "pointer" }}>
+            {generating ? "Generating..." : "Generate invite link"}
+          </button>
+        )}
+        {link && (
+          <div style={{ fontSize: 11, color: "var(--text-hint)", marginTop: 6 }}>
+            Expires in 7 days · single use
+          </div>
+        )}
+        {link && (
+          <button onClick={() => setLink("")} style={{ fontSize: 11, color: "var(--text-hint)", background: "none", border: "none", cursor: "pointer", textDecoration: "underline", marginTop: 4 }}>
+            Generate new link
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  // ── Email inviter ──
+  function EmailInviter({ groupId, groupDoc, userId, userName }) {
+    const [email, setEmail] = useState("");
+    const [status, setStatus] = useState("");
+    const [sending, setSending] = useState(false);
+
+    async function sendInvite() {
+      if (!email.trim()) return setStatus("Enter an email.");
+      setSending(true);
+      try {
+        // Generate invite token
+        const token = Math.random().toString(36).substring(2, 18);
+        const expiresAt = new Date(Date.now() + 7 * 24 * 60 * 60 * 1000);
+        const { setDoc, doc: fsDoc } = await import("firebase/firestore");
+        await setDoc(fsDoc(db, "invites", token), {
+          groupId,
+          groupName: groupDoc?.name ?? "Badminton Group",
+          createdBy: userId,
+          createdAt: serverTimestamp(),
+          expiresAt,
+          used: false,
+        });
+        const inviteLink = `${window.location.origin}/invite/${token}`;
+
+        // Send email via EmailJS
+        await emailjs.send(
+          "service_cann3ab",
+          "template_gv8acg8",
+          {
+            to_email: email.trim(),
+            from_name: userName ?? "A friend",
+            group_name: groupDoc?.name ?? "Badminton Group",
+            invite_link: inviteLink,
+          },
+          "wzi1y9kKiPdnNqeXD"
+        );
+
+        setEmail("");
+        setStatus(`Invite sent to ${email}!`);
+      } catch (e) {
+        setStatus("Failed to send: " + e.message);
+      }
+      setSending(false);
+      setTimeout(() => setStatus(""), 5000);
+    }
+
+    return (
+      <div>
+        <div style={{ display: "flex", gap: 6 }}>
+          <input
+            type="email"
+            value={email}
+            onChange={e => setEmail(e.target.value)}
+            placeholder="friend@gmail.com"
+            onKeyDown={e => e.key === "Enter" && sendInvite()}
+            style={{ flex: 1 }}
+          />
+          <button onClick={sendInvite} disabled={sending} style={{ padding: "8px 12px", fontSize: 13, fontWeight: 500, background: sending ? "var(--border-mid)" : "var(--text)", color: sending ? "var(--text-hint)" : "var(--bg)", border: "none", borderRadius: 8, cursor: sending ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}>
+            {sending ? "Sending..." : "Send"}
+          </button>
+        </div>
+        {status && (
+          <div style={{ fontSize: 12, color: status.includes("sent") ? "#3B6D11" : "#A32D2D", marginTop: 6 }}>
+            {status}
+          </div>
+        )}
+      </div>
+    );
+  }
+
 
 export default function Settings({ user, players, groupId, onDeleted }) {
   const { dark, setDark } = useTheme();
@@ -371,12 +512,21 @@ export default function Settings({ user, players, groupId, onDeleted }) {
         {/* ── Invite ── */}
         {sectionLabel("Invite players")}
         {card(<>
-          <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: "0.75rem" }}>
-            Invite someone by their Google account email. They need to have signed into ShuttleRanked at least once.
+          <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: "1rem" }}>
+            Generate an invite link to share anywhere, or send directly to an email address.
           </div>
-          {row("Email address", <input type="email" value={inviteEmail} onChange={e => setInviteEmail(e.target.value)} placeholder="friend@gmail.com" />)}
-          {primaryBtn("Send invite", inviteByEmail)}
-          {inviteStatus && <div style={{ fontSize: 12, color: inviteStatus.includes("added") ? "#3B6D11" : "#A32D2D", marginTop: 8 }}>{inviteStatus}</div>}
+
+          {/* ── Invite link ── */}
+          <div style={{ marginBottom: "1rem" }}>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 6, fontWeight: 500 }}>Invite link</div>
+            <InviteLinkGenerator groupId={groupId} groupDoc={groupDoc} userId={user.uid} />
+          </div>
+
+          {/* ── Email invite ── */}
+          <div>
+            <div style={{ fontSize: 12, color: "var(--text-secondary)", marginBottom: 6, fontWeight: 500 }}>Send by email</div>
+            <EmailInviter groupId={groupId} groupDoc={groupDoc} userId={user.uid} userName={user.displayName} />
+          </div>
         </>)}
 
         {/* ── Members & admin management ── */}

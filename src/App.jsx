@@ -13,6 +13,8 @@ import Settings from "./components/Settings";
 import GlobalLeaderboard from "./components/GlobalLeaderboard";
 import GroupSetup from "./components/GroupSetup";
 import NotificationPopup from "./components/NotificationPopup";
+import { Routes, Route } from "react-router-dom";
+import InvitePage from "./components/InvitePage";
 
 export default function App() {
   const [user, setUser] = useState(null);
@@ -82,21 +84,21 @@ export default function App() {
 
   // ── Load active group doc ──
   useEffect(() => {
-    if (!activeGroupId) return;
+    if (!user || !activeGroupId) return;
     const unsub = onSnapshot(doc(db, "groups", activeGroupId), snap => {
       if (snap.exists()) setActiveGroup({ id: snap.id, ...snap.data() });
     });
     return unsub;
-  }, [activeGroupId]);
+  }, [user, activeGroupId]);
 
   // ── Load players in active group ──
   useEffect(() => {
-    if (!activeGroupId) return;
+    if (!user || !activeGroupId) return;
     const unsub = onSnapshot(collection(db, "groups", activeGroupId, "players"), snap => {
       setPlayers(snap.docs.map(d => ({ id: d.id, ...d.data() })));
     });
     return unsub;
-  }, [activeGroupId]);
+  }, [user, activeGroupId]);
 
   // ── Load player doc for current user in active group ──
   useEffect(() => {
@@ -110,13 +112,13 @@ export default function App() {
 
   // ── Live tournament ──
   useEffect(() => {
-    if (!activeGroupId) return;
+    if (!user || !activeGroupId) return;
     const unsub = onSnapshot(doc(db, "groups", activeGroupId, "tournaments", "active"), snap => {
       if (snap.exists()) setActiveTournament({ id: snap.id, ...snap.data() });
       else setActiveTournament(null);
     });
     return unsub;
-  }, [activeGroupId]);
+  }, [user, activeGroupId]);
 
   // ── Pending match requests ──
   useEffect(() => {
@@ -156,6 +158,40 @@ export default function App() {
     setView("leaderboard");
   }
 
+  return (
+    <Routes>
+      <Route path="/invite/:token" element={<InvitePage />} />
+      <Route path="*" element={<MainApp
+        user={user}
+        playerDoc={playerDoc}
+        players={players}
+        view={view}
+        setView={setView}
+        activeTournament={activeTournament}
+        pendingRequests={pendingRequests}
+        showPopup={showPopup}
+        setShowPopup={setShowPopup}
+        groups={groups}
+        activeGroupId={activeGroupId}
+        activeGroup={activeGroup}
+        loadingGroups={loadingGroups}
+        dark={dark}
+        setDark={setDark}
+        switchGroup={switchGroup}
+        handleGroupCreated={handleGroupCreated}
+        handleLogin={handleLogin}
+        handleLogout={handleLogout}
+      />} />
+    </Routes>
+  );
+}
+
+function MainApp({
+  user, playerDoc, players, view, setView, activeTournament,
+  pendingRequests, showPopup, setShowPopup, groups, activeGroupId,
+  activeGroup, loadingGroups, dark, setDark, switchGroup,
+  handleGroupCreated, handleLogin, handleLogout,
+}) {
   // ── Login screen ──
   if (!user) {
     return (
@@ -210,62 +246,62 @@ export default function App() {
   return (
     <div style={{ maxWidth: 860, margin: "0 auto", padding: "1rem", minHeight: "100vh", background: "var(--bg)" }}>
       {/* ── Header ── */}
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: "1rem", borderBottom: "1px solid var(--border)", marginBottom: "1rem" }}>
-          <div style={{ fontSize: 20, fontWeight: 500, color: "var(--text)" }}>
-            Shuttle<span style={{ color: "var(--text-hint)", fontWeight: 400 }}>Ranked</span>
-          </div>
-          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-            <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>{user.displayName?.split(" ")[0]}</span>
-            {isAdmin && <span style={{ fontSize: 11, background: "#FAEEDA", color: "#633806", padding: "2px 6px", borderRadius: 10 }}>admin</span>}
-            <button onClick={() => setDark(d => !d)} style={{ fontSize: 16, padding: "4px 8px", cursor: "pointer", border: "1px solid var(--border-mid)", borderRadius: 6, background: "transparent", color: "var(--text-secondary)" }}>
-              {dark ? "☀️" : "🌙"}
-            </button>
-            <button onClick={handleLogout} style={{ fontSize: 12, padding: "4px 10px", cursor: "pointer", border: "1px solid var(--border-mid)", borderRadius: 6, background: "transparent", color: "var(--text-secondary)" }}>
-              Out
-            </button>
-          </div>
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", paddingBottom: "1rem", borderBottom: "1px solid var(--border)", marginBottom: "1rem" }}>
+        <div style={{ fontSize: 20, fontWeight: 500, color: "var(--text)" }}>
+          Shuttle<span style={{ color: "var(--text-hint)", fontWeight: 400 }}>Ranked</span>
         </div>
-
-        {/* ── Group switcher — mobile friendly ── */}
-        <div style={{ marginBottom: "1rem" }}>
-          <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
-            <span style={{ fontSize: 11, color: "var(--text-hint)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
-              Group {activeGroup?.code && <span style={{ color: "var(--text)", fontWeight: 500 }}>· {activeGroup.code}</span>}
-            </span>
-            <button onClick={() => setView("groupsetup")} style={{ fontSize: 12, padding: "3px 10px", borderRadius: 20, cursor: "pointer", border: "1px dashed var(--border-mid)", background: "transparent", color: "var(--text-hint)" }}>
-              + Join / Create
-            </button>
-          </div>
-          <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4 }}>
-            {groups.map(g => (
-              <button key={g.id} onClick={() => switchGroup(g.id)} style={{
-                fontSize: 13, padding: "8px 16px", borderRadius: 20, cursor: "pointer", whiteSpace: "nowrap",
-                border: activeGroupId === g.id ? "1.5px solid #185FA5" : "1px solid var(--border-mid)",
-                background: activeGroupId === g.id ? "#1a2e40" : "var(--bg-card)",
-                color: activeGroupId === g.id ? "#90c4f9" : "var(--text-secondary)",
-                fontWeight: activeGroupId === g.id ? 500 : 400,
-                flexShrink: 0,
-              }}>{g.name}</button>
-            ))}
-          </div>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <span style={{ fontSize: 13, color: "var(--text-secondary)" }}>{user.displayName?.split(" ")[0]}</span>
+          {isAdmin && <span style={{ fontSize: 11, background: "#FAEEDA", color: "#633806", padding: "2px 6px", borderRadius: 10 }}>admin</span>}
+          <button onClick={() => setDark(d => !d)} style={{ fontSize: 16, padding: "4px 8px", cursor: "pointer", border: "1px solid var(--border-mid)", borderRadius: 6, background: "transparent", color: "var(--text-secondary)" }}>
+            {dark ? "☀️" : "🌙"}
+          </button>
+          <button onClick={handleLogout} style={{ fontSize: 12, padding: "4px 10px", cursor: "pointer", border: "1px solid var(--border-mid)", borderRadius: 6, background: "transparent", color: "var(--text-secondary)" }}>
+            Out
+          </button>
         </div>
+      </div>
 
-        {/* ── Tabs — bottom nav on mobile ── */}
-        <div style={{
-          display: "flex", gap: 2, background: "var(--bg-secondary)",
-          borderRadius: 10, padding: 4, marginBottom: "1.5rem", overflowX: "auto",
-        }}>
-          {tabs.map(t => (
-            <button key={t.id} onClick={() => setView(t.id)} style={{
-              flex: 1, padding: "8px 4px", fontSize: 12, borderRadius: 6,
-              border: view === t.id ? "1px solid var(--border-mid)" : "none",
-              background: view === t.id ? "var(--bg-card)" : "transparent",
-              fontWeight: view === t.id ? 500 : 400,
-              cursor: "pointer", color: "var(--text)", whiteSpace: "nowrap",
-              minWidth: 52,
-            }}>{t.label}</button>
+      {/* ── Group switcher — mobile friendly ── */}
+      <div style={{ marginBottom: "1rem" }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 6 }}>
+          <span style={{ fontSize: 11, color: "var(--text-hint)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+            Group {activeGroup?.code && <span style={{ color: "var(--text)", fontWeight: 500 }}>· {activeGroup.code}</span>}
+          </span>
+          <button onClick={() => setView("groupsetup")} style={{ fontSize: 12, padding: "3px 10px", borderRadius: 20, cursor: "pointer", border: "1px dashed var(--border-mid)", background: "transparent", color: "var(--text-hint)" }}>
+            + Join / Create
+          </button>
+        </div>
+        <div style={{ display: "flex", gap: 6, overflowX: "auto", paddingBottom: 4 }}>
+          {groups.map(g => (
+            <button key={g.id} onClick={() => switchGroup(g.id)} style={{
+              fontSize: 13, padding: "8px 16px", borderRadius: 20, cursor: "pointer", whiteSpace: "nowrap",
+              border: activeGroupId === g.id ? "1.5px solid #185FA5" : "1px solid var(--border-mid)",
+              background: activeGroupId === g.id ? "#1a2e40" : "var(--bg-card)",
+              color: activeGroupId === g.id ? "#90c4f9" : "var(--text-secondary)",
+              fontWeight: activeGroupId === g.id ? 500 : 400,
+              flexShrink: 0,
+            }}>{g.name}</button>
           ))}
         </div>
+      </div>
+
+      {/* ── Tabs — bottom nav on mobile ── */}
+      <div style={{
+        display: "flex", gap: 2, background: "var(--bg-secondary)",
+        borderRadius: 10, padding: 4, marginBottom: "1.5rem", overflowX: "auto",
+      }}>
+        {tabs.map(t => (
+          <button key={t.id} onClick={() => setView(t.id)} style={{
+            flex: 1, padding: "8px 4px", fontSize: 12, borderRadius: 6,
+            border: view === t.id ? "1px solid var(--border-mid)" : "none",
+            background: view === t.id ? "var(--bg-card)" : "transparent",
+            fontWeight: view === t.id ? 500 : 400,
+            cursor: "pointer", color: "var(--text)", whiteSpace: "nowrap",
+            minWidth: 52,
+          }}>{t.label}</button>
+        ))}
+      </div>
 
       {/* ── Views ── */}
       {view === "groupsetup" && <GroupSetup user={user} onDone={handleGroupCreated} onLogout={handleLogout} existingGroups={groups} />}
