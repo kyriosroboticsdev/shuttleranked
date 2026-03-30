@@ -286,19 +286,19 @@ function MainApp({
         </div>
       </div>
 
-      {/* ── Tabs — bottom nav on mobile ── */}
+      {/* ── Tabs ── */}
       <div style={{
-        display: "flex", gap: 2, background: "var(--bg-secondary)",
-        borderRadius: 10, padding: 4, marginBottom: "1.5rem", overflowX: "auto",
+        display: "grid", gridTemplateColumns: "repeat(4, 1fr)", gap: 2,
+        background: "var(--bg-secondary)", borderRadius: 10, padding: 4, marginBottom: "1.5rem",
       }}>
         {tabs.map(t => (
           <button key={t.id} onClick={() => setView(t.id)} style={{
-            flex: 1, padding: "8px 4px", fontSize: 12, borderRadius: 6,
+            padding: "8px 4px", fontSize: 12, borderRadius: 6,
             border: view === t.id ? "1px solid var(--border-mid)" : "none",
             background: view === t.id ? "var(--bg-card)" : "transparent",
             fontWeight: view === t.id ? 500 : 400,
             cursor: "pointer", color: "var(--text)", whiteSpace: "nowrap",
-            minWidth: 52,
+            textAlign: "center",
           }}>{t.label}</button>
         ))}
       </div>
