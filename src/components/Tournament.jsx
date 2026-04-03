@@ -113,17 +113,27 @@ function buildBracket(teams) {
     current = next;
   }
 
-  // Round 0 only: resolve BYEs and place those winners into round 1 slots.
-  // Do NOT cascade further — every subsequent match needs a human result.
-  rounds[0].forEach((m, mi) => {
-    const byeTeam = (m.a && !m.b) ? m.a : (!m.a && m.b) ? m.b : null;
-    if (!byeTeam) return;
-    m.winner = byeTeam;
-    const nextMatch = rounds[1]?.[Math.floor(mi / 2)];
-    if (!nextMatch) return;
-    if (mi % 2 === 0) nextMatch.a = byeTeam;
-    else nextMatch.b = byeTeam;
-  });
+  // Resolve all BYEs at build time — cascade until every BYE team
+  // lands in a match that has a real opponent waiting, or reaches the final.
+  // This runs round by round so we never skip a round that has real matches.
+  for (let ri = 0; ri < rounds.length; ri++) {
+    rounds[ri].forEach((m, mi) => {
+      // A BYE match: exactly one team, no opponent, no winner yet
+      const byeTeam = (!m.winner && m.a && !m.b) ? m.a
+                    : (!m.winner && m.b && !m.a) ? m.b
+                    : null;
+      if (!byeTeam) return;
+
+      // Auto-advance the BYE team — no ELO change, no human click needed
+      m.winner = byeTeam;
+
+      // Place into next round
+      const nextMatch = rounds[ri + 1]?.[Math.floor(mi / 2)];
+      if (!nextMatch) return;
+      if (mi % 2 === 0) nextMatch.a = byeTeam;
+      else nextMatch.b = byeTeam;
+    });
+  }
 
   return rounds;
 }
