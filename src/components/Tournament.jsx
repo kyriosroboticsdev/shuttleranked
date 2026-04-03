@@ -97,7 +97,6 @@ function buildBracket(teams) {
   const seeded = [...shuffled];
   while (seeded.length < size) seeded.push(null);
 
-  // Build empty rounds
   const rounds = [];
   let current = seeded.reduce((acc, _, i, arr) => {
     if (i % 2 === 0) acc.push({
@@ -117,20 +116,6 @@ function buildBracket(teams) {
     rounds.push(next);
     current = next;
   }
-
-  // Round 0 BYEs: auto-resolve matches where one slot is null.
-  // ONLY place the bye winner into round 1. Stop there. No further cascading.
-  rounds[0].forEach((m, mi) => {
-    const byeTeam = (m.a && !m.b) ? m.a : (!m.a && m.b) ? m.b : null;
-    if (!byeTeam) return;
-    m.winner = byeTeam;
-    // Place into round 1 only if round 1 exists
-    if (rounds.length > 1) {
-      const nextMatch = rounds[1][Math.floor(mi / 2)];
-      if (mi % 2 === 0) nextMatch.a = byeTeam;
-      else nextMatch.b = byeTeam;
-    }
-  });
 
   return rounds;
 }
@@ -271,7 +256,7 @@ function ManualPairing({ players, onDone, onBack }) {
 }
 
 // ── Live bracket view ──
-function LiveBracket({ tournament, canAdvance, onMatchClick, onArchive }) {
+function LiveBracket({ tournament, canAdvance, onMatchClick, onByeClick, onArchive }) {
   const bracket = deserializeBracket(tournament.bracket);
   const { winner: champion } = tournament;
   if (!bracket?.length) return null;
@@ -296,51 +281,66 @@ function LiveBracket({ tournament, canAdvance, onMatchClick, onArchive }) {
         <div style={{ display: "flex", alignItems: "stretch", minWidth: "max-content" }}>
           {bracket.map((matches, ri) => (
             <div key={ri} style={{ display: "flex", alignItems: "stretch" }}>
-              <div style={{ minWidth: 190 }}>
+              <div style={{ minWidth: 200 }}>
                 <div style={{ fontSize: 11, color: "var(--text-hint)", textAlign: "center", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>{labels[ri]}</div>
                 <div style={{ display: "flex", flexDirection: "column", justifyContent: "space-around", height: "calc(100% - 24px)" }}>
                   {matches.map((m, mi) => {
-                    const clickable = canAdvance && !m.winner && m.a && m.b;
+                    const hasA = m.a !== null;
+                    const hasB = m.b !== null;
+                    const isRealMatch = hasA && hasB && !m.winner;
+                    const isByeMatch = (hasA || hasB) && !(hasA && hasB) && !m.winner;
+
                     return (
-                      <div key={mi}
-                        onClick={() => clickable && onMatchClick(ri, mi, m)}
-                        style={{
-                          margin: "6px 8px",
-                          border: ri === bracket.length - 1 ? "1.5px solid #EF9F27" : "1px solid var(--border)",
-                          borderRadius: 8, overflow: "hidden", background: "var(--bg-card)",
-                          cursor: clickable ? "pointer" : "default",
-                          transition: "box-shadow 0.12s",
-                          boxShadow: clickable ? undefined : "none",
-                        }}
-                        onMouseEnter={e => { if (clickable) e.currentTarget.style.boxShadow = "0 0 0 2px #185FA5"; }}
-                        onMouseLeave={e => { e.currentTarget.style.boxShadow = "none"; }}
-                      >
+                      <div key={mi} style={{
+                        margin: "6px 8px",
+                        border: ri === bracket.length - 1 ? "1.5px solid #EF9F27" : "1px solid var(--border)",
+                        borderRadius: 8, overflow: "hidden", background: "var(--bg-card)",
+                      }}>
+                        {/* Team A row */}
                         {[{ team: m.a, side: "a" }, { team: m.b, side: "b" }].map(({ team, side }, ti) => {
-                          const isWinner = m.winner != null && team != null && m.winner.id === team.id;
+                          const isWinner = m.winner && team && m.winner.players[0].id === team.players[0].id;
                           return (
-                          <div key={side} style={{
-                            padding: "8px 10px", fontSize: 12, display: "flex", alignItems: "center", gap: 6,
-                            borderTop: ti > 0 ? "1px solid var(--border)" : "none",
-                            background: isWinner ? "var(--bg-secondary)" : "var(--bg-card)",
-                            fontWeight: isWinner ? 500 : 400,
-                            color: "var(--text)",
-                          }}>
-                            <span style={{ fontSize: 10, color: "var(--text-hint)", minWidth: 14 }}>{ri === 0 ? mi * 2 + ti + 1 : ""}</span>
-                            <span>{team ? teamLabel(team) : (canAdvance ? "— waiting —" : "TBD")}</span>
-                            {isWinner && <span style={{ marginLeft: "auto", fontSize: 10, color: "#22c55e" }}>✓</span>}
-                          </div>
+                            <div key={side} style={{
+                              padding: "8px 10px", fontSize: 12, display: "flex", alignItems: "center", gap: 6,
+                              borderTop: ti > 0 ? "1px solid var(--border)" : "none",
+                              background: isWinner ? "var(--bg-secondary)" : "var(--bg-card)",
+                              fontWeight: isWinner ? 500 : 400,
+                              color: "var(--text)",
+                            }}>
+                              <span style={{ fontSize: 10, color: "var(--text-hint)", minWidth: 14 }}>
+                                {ri === 0 ? mi * 2 + ti + 1 : ""}
+                              </span>
+                              <span style={{ flex: 1 }}>{team ? teamLabel(team) : "TBD"}</span>
+                              {isWinner && <span style={{ fontSize: 10, color: "#22c55e" }}>✓</span>}
+                            </div>
                           );
                         })}
-                        {canAdvance && !m.winner && m.a && m.b && (
-                            <div style={{ padding: "4px 10px", fontSize: 10, color: "var(--text-hint)", borderTop: "1px solid var(--border)", background: "var(--bg-secondary)", textAlign: "center" }}>
-                              Tap to enter score
-                            </div>
-                          )}
-                          {canAdvance && !m.winner && (m.a || m.b) && !(m.a && m.b) && (
-                            <div style={{ padding: "4px 10px", fontSize: 10, color: "var(--text-hint)", borderTop: "1px solid var(--border)", background: "var(--bg-secondary)", textAlign: "center" }}>
-                              Waiting for opponent...
-                            </div>
-                          )}
+
+                        {/* Action row */}
+                        {canAdvance && !m.winner && (
+                          <>
+                            {isRealMatch && (
+                              <div
+                                onClick={() => onMatchClick(ri, mi, m)}
+                                style={{ padding: "5px 10px", fontSize: 11, color: "#185FA5", borderTop: "1px solid var(--border)", background: "var(--bg-secondary)", textAlign: "center", cursor: "pointer" }}
+                              >
+                                Tap to enter score
+                              </div>
+                            )}
+                            {isByeMatch && (
+                              <div
+                                onClick={() => onByeClick(ri, mi)}
+                                style={{ padding: "5px 10px", fontSize: 11, color: "#633806", borderTop: "1px solid var(--border)", background: "#FAEEDA", textAlign: "center", cursor: "pointer" }}
+                              >
+                                Give BYE →
+                              </div>
+                            )}
+                            {!hasA && !hasB && (
+                              <div style={{ padding: "5px 10px", fontSize: 11, color: "var(--text-hint)", borderTop: "1px solid var(--border)", background: "var(--bg-secondary)", textAlign: "center" }}>
+                                Waiting...
+                              </div>
+                            )}
+                          </>
                         )}
                       </div>
                     );
@@ -378,18 +378,27 @@ export default function Tournament({ players, currentUid, isAdmin, activeTournam
   // Tracks which match is open for score entry: { roundIdx, matchIdx, matchObj }
   const [scoringMatch, setScoringMatch] = useState(null);
 
-  async function handleAdvance(roundIdx, matchIdx, sets) {
+  async function handleAdvance(roundIdx, matchIdx, sets, isBye = false) {
   if (!activeTournament) return;
   const rounds = deserializeBracket(activeTournament.bracket);
   const match = rounds[roundIdx][matchIdx];
+  if (match.winner) return;
 
-  if (match.winner || !match.a || !match.b) return;
+  let winner, loser;
 
-  // Determine winner from sets
-  const teamAWins = sets.filter(s => s.w > s.l).length;
-  const teamBWins = sets.filter(s => s.l > s.w).length;
-  const winner = teamAWins >= teamBWins ? match.a : match.b;
-  const loser  = teamAWins >= teamBWins ? match.b : match.a;
+  if (isBye) {
+    // One team present, other is null — the present team wins automatically
+    winner = match.a ?? match.b;
+    loser = null;
+    if (!winner) return;
+  } else {
+    if (!match.a || !match.b) return;
+    const teamAWins = sets.filter(s => s.w > s.l).length;
+    const teamBWins = sets.filter(s => s.l > s.w).length;
+    winner = teamAWins >= teamBWins ? match.a : match.b;
+    loser  = teamAWins >= teamBWins ? match.b : match.a;
+  }
+
   match.winner = winner;
 
   // Place winner into next round
@@ -399,45 +408,51 @@ export default function Tournament({ players, currentUid, isAdmin, activeTournam
     else nextMatch.b = winner;
   }
 
-  // ── BYE cascade loop ──
-// After a real match is decided, check if any subsequent match now has
-// exactly one team with no possible opponent coming.
-// Only cascade if the feeder for the empty slot already has a winner.
-let changed = true;
-while (changed) {
-  changed = false;
-  for (let ri = 1; ri < rounds.length; ri++) {
-    for (let mi = 0; mi < rounds[ri].length; mi++) {
-      const m = rounds[ri][mi];
-      if (m.winner) continue;
+  const finalRound = rounds[rounds.length - 1];
+  const isFinal = !!finalRound[0].winner;
+  const champion = isFinal ? finalRound[0].winner : null;
 
-      const hasA = m.a !== null;
-      const hasB = m.b !== null;
-      if (hasA && hasB) continue;  // real match waiting, skip
-      if (!hasA && !hasB) continue; // nothing here yet, skip
+  await setDoc(doc(db, "groups", groupId, "tournaments", "active"), {
+    ...activeTournament,
+    bracket: serializeBracket(rounds),
+    ...(isFinal ? { winner: champion, status: "finished" } : {}),
+  });
 
-      const loneTeam = hasA ? m.a : m.b;
+  // ELO updates — only for real matches, not byes
+  if (!isBye && loser) {
+    try {
+      const winnerAvg = winner.players.reduce((s, p) => s + (p.doublesElo ?? 1000), 0) / winner.players.length;
+      const loserAvg  = loser.players.reduce((s, p)  => s + (p.doublesElo ?? 1000), 0) / loser.players.length;
+      const exp = 1 / (1 + Math.pow(10, (loserAvg - winnerAvg) / 400));
+      const change = Math.max(Math.round(32 * (1 - exp)), 4);
 
-      // Find the feeder for the EMPTY slot
-      const feederForA = rounds[ri - 1]?.[mi * 2] ?? null;
-      const feederForB = rounds[ri - 1]?.[mi * 2 + 1] ?? null;
-      const missingFeeder = hasA ? feederForB : feederForA;
+      await Promise.all([...winner.players, ...loser.players].map(p =>
+        addDoc(collection(db, "groups", groupId, "players", p.id, "eloHistory"), {
+          singlesElo: p.singlesElo ?? 1000,
+          doublesElo: p.doublesElo ?? 1000,
+          timestamp: serverTimestamp(),
+        })
+      ));
 
-      // Only cascade if the missing feeder has been explicitly decided
-      // by a human (has a non-null winner). Never cascade from empty feeders.
-      if (missingFeeder && missingFeeder.winner !== null) {
-        m.winner = loneTeam;
-        changed = true;
-        if (ri + 1 < rounds.length) {
-          const nx = rounds[ri + 1][Math.floor(mi / 2)];
-          if (mi % 2 === 0) nx.a = loneTeam;
-          else nx.b = loneTeam;
-        }
-      }
+      await Promise.all([
+        ...winner.players.map(p =>
+          updateDoc(doc(db, "groups", groupId, "players", p.id), {
+            doublesElo: (p.doublesElo ?? 1000) + change,
+            wins: (p.wins ?? 0) + 1,
+          })
+        ),
+        ...loser.players.map(p =>
+          updateDoc(doc(db, "groups", groupId, "players", p.id), {
+            doublesElo: Math.max((p.doublesElo ?? 1000) - change, 800),
+            losses: (p.losses ?? 0) + 1,
+          })
+        ),
+      ]);
+    } catch (e) {
+      console.error("Tournament ELO update failed:", e);
     }
   }
 }
-
   // Crown champion only if the final match was just won by human input
   // OR if it was auto-resolved by the BYE cascade above
   const finalRound = rounds[rounds.length - 1];
@@ -594,6 +609,7 @@ while (changed) {
           tournament={activeTournament}
           canAdvance={isCreator && !isFinished}
           onMatchClick={(ri, mi, m) => setScoringMatch({ roundIdx: ri, matchIdx: mi, matchObj: m })}
+          onByeClick={(ri, mi) => handleAdvance(ri, mi, [], true)}
           onArchive={handleArchive}
         />
         {scoringMatch && (
