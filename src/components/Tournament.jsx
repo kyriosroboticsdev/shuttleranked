@@ -97,13 +97,13 @@ function buildBracket(teams) {
   const seeded = [...shuffled];
   while (seeded.length < size) seeded.push(null);
 
+  // Build empty rounds
   const rounds = [];
   let current = seeded.reduce((acc, _, i, arr) => {
     if (i % 2 === 0) acc.push({
-      a: arr[i],
+      a: arr[i] ?? null,
       b: arr[i + 1] ?? null,
       winner: null,
-      isBye: !arr[i] || !arr[i + 1], // mark BYE matches
     });
     return acc;
   }, []);
@@ -112,22 +112,24 @@ function buildBracket(teams) {
   while (current.length > 1) {
     const next = Array.from(
       { length: Math.floor(current.length / 2) },
-      () => ({ a: null, b: null, winner: null, isBye: false })
+      () => ({ a: null, b: null, winner: null })
     );
     rounds.push(next);
     current = next;
   }
 
-  // Resolve round 0 BYEs only — place winner into round 1 slot
+  // Round 0 BYEs: auto-resolve matches where one slot is null.
+  // ONLY place the bye winner into round 1. Stop there. No further cascading.
   rounds[0].forEach((m, mi) => {
-    if (!m.isBye) return;
-    const byeTeam = m.a ?? m.b;
+    const byeTeam = (m.a && !m.b) ? m.a : (!m.a && m.b) ? m.b : null;
     if (!byeTeam) return;
     m.winner = byeTeam;
-    const nextMatch = rounds[1]?.[Math.floor(mi / 2)];
-    if (!nextMatch) return;
-    if (mi % 2 === 0) nextMatch.a = byeTeam;
-    else nextMatch.b = byeTeam;
+    // Place into round 1 only if round 1 exists
+    if (rounds.length > 1) {
+      const nextMatch = rounds[1][Math.floor(mi / 2)];
+      if (mi % 2 === 0) nextMatch.a = byeTeam;
+      else nextMatch.b = byeTeam;
+    }
   });
 
   return rounds;
@@ -398,12 +400,9 @@ export default function Tournament({ players, currentUid, isAdmin, activeTournam
   }
 
   // ── BYE cascade loop ──
-  // After every advance, scan all rounds from the beginning.
-  // If a match has one team and the other slot is null, check whether
-  // both feeder matches from the previous round are already decided.
-  // If yes → the missing opponent is never coming → auto-advance the lone team.
-  // Repeat until no more BYEs can be resolved.
-  // ── BYE cascade loop ──
+// After a real match is decided, check if any subsequent match now has
+// exactly one team with no possible opponent coming.
+// Only cascade if the feeder for the empty slot already has a winner.
 let changed = true;
 while (changed) {
   changed = false;
@@ -414,38 +413,19 @@ while (changed) {
 
       const hasA = m.a !== null;
       const hasB = m.b !== null;
+      if (hasA && hasB) continue;  // real match waiting, skip
+      if (!hasA && !hasB) continue; // nothing here yet, skip
 
-      // If both slots filled — real match, skip
-      if (hasA && hasB) continue;
-      // If neither slot filled — nothing to do yet
-      if (!hasA && !hasB) continue;
-
-      // One slot filled, one empty — check if the missing feeder is done
       const loneTeam = hasA ? m.a : m.b;
 
-      // Feeders for match mi in round ri come from round ri-1
-      // match mi feeds from [ri-1][mi*2] (for slot a) and [ri-1][mi*2+1] (for slot b)
-      const feederForA = rounds[ri - 1]?.[mi * 2];
-      const feederForB = rounds[ri - 1]?.[mi * 2 + 1];
+      // Find the feeder for the EMPTY slot
+      const feederForA = rounds[ri - 1]?.[mi * 2] ?? null;
+      const feederForB = rounds[ri - 1]?.[mi * 2 + 1] ?? null;
       const missingFeeder = hasA ? feederForB : feederForA;
 
-      if (!missingFeeder) {
-        // No feeder exists at all — auto advance
-        m.winner = loneTeam;
-        changed = true;
-        if (ri + 1 < rounds.length) {
-          const nx = rounds[ri + 1][Math.floor(mi / 2)];
-          if (mi % 2 === 0) nx.a = loneTeam;
-          else nx.b = loneTeam;
-        }
-        continue;
-      }
-
-      // Feeder is done if it has a winner, or if it's an empty BYE (both null)
-      const feederDone = !!missingFeeder.winner ||
-                         (!missingFeeder.a && !missingFeeder.b);
-
-      if (feederDone) {
+      // Only cascade if the missing feeder has been explicitly decided
+      // by a human (has a non-null winner). Never cascade from empty feeders.
+      if (missingFeeder && missingFeeder.winner !== null) {
         m.winner = loneTeam;
         changed = true;
         if (ri + 1 < rounds.length) {
