@@ -107,9 +107,14 @@ function buildBracket(teams) {
     rounds.push(next);
     current = next;
   }
-  rounds[0].forEach(m => {
+  // Auto-resolve BYE matches and propagate their winners into round 2
+  rounds[0].forEach((m, mi) => {
     if (m.a && !m.b) m.winner = m.a;
     if (m.b && !m.a) m.winner = m.b;
+    if (m.winner && rounds.length > 1) {
+      const next = rounds[1][Math.floor(mi / 2)];
+      if (mi % 2 === 0) next.a = m.winner; else next.b = m.winner;
+    }
   });
   return rounds;
 }
@@ -294,19 +299,22 @@ function LiveBracket({ tournament, canAdvance, onMatchClick, onArchive }) {
                         onMouseEnter={e => { if (clickable) e.currentTarget.style.boxShadow = "0 0 0 2px #185FA5"; }}
                         onMouseLeave={e => { e.currentTarget.style.boxShadow = "none"; }}
                       >
-                        {[{ team: m.a, side: "a" }, { team: m.b, side: "b" }].map(({ team, side }, ti) => (
+                        {[{ team: m.a, side: "a" }, { team: m.b, side: "b" }].map(({ team, side }, ti) => {
+                          const isWinner = m.winner != null && team != null && m.winner.id === team.id;
+                          return (
                           <div key={side} style={{
                             padding: "8px 10px", fontSize: 12, display: "flex", alignItems: "center", gap: 6,
                             borderTop: ti > 0 ? "1px solid var(--border)" : "none",
-                            background: m.winner && m.winner === team ? "var(--bg-secondary)" : "var(--bg-card)",
-                            fontWeight: m.winner && m.winner === team ? 500 : 400,
+                            background: isWinner ? "var(--bg-secondary)" : "var(--bg-card)",
+                            fontWeight: isWinner ? 500 : 400,
                             color: "var(--text)",
                           }}>
                             <span style={{ fontSize: 10, color: "var(--text-hint)", minWidth: 14 }}>{ri === 0 ? mi * 2 + ti + 1 : ""}</span>
                             <span>{team ? teamLabel(team) : "TBD"}</span>
-                            {m.winner && m.winner === team && <span style={{ marginLeft: "auto", fontSize: 10, color: "#22c55e" }}>✓</span>}
+                            {isWinner && <span style={{ marginLeft: "auto", fontSize: 10, color: "#22c55e" }}>✓</span>}
                           </div>
-                        ))}
+                          );
+                        })}
                         {clickable && (
                           <div style={{ padding: "4px 10px", fontSize: 10, color: "var(--text-hint)", borderTop: "1px solid var(--border)", background: "var(--bg-secondary)", textAlign: "center" }}>
                             Tap to enter score
@@ -367,43 +375,45 @@ export default function Tournament({ players, currentUid, isAdmin, activeTournam
     }
     const isFinal = roundIdx === rounds.length - 1;
 
-    // ELO update (doubles)
-    const winnerAvg = winner.players.reduce((s, p) => s + (p.doublesElo ?? 1000), 0) / winner.players.length;
-    const loserAvg  = loser.players.reduce((s, p)  => s + (p.doublesElo ?? 1000), 0) / loser.players.length;
-    const exp = 1 / (1 + Math.pow(10, (loserAvg - winnerAvg) / 400));
-    const change = Math.max(Math.round(32 * (1 - exp)), 4);
-
-    // Snapshot ELO history before the change
-    await Promise.all([...winner.players, ...loser.players].map(p =>
-      addDoc(collection(db, "groups", groupId, "players", p.id, "eloHistory"), {
-        singlesElo: p.singlesElo ?? 1000,
-        doublesElo: p.doublesElo ?? 1000,
-        timestamp: serverTimestamp(),
-      })
-    ));
-
-    // Apply ELO deltas to player docs
-    await Promise.all([
-      ...winner.players.map(p =>
-        updateDoc(doc(db, "groups", groupId, "players", p.id), {
-          doublesElo: (p.doublesElo ?? 1000) + change,
-          wins: (p.wins ?? 0) + 1,
-        })
-      ),
-      ...loser.players.map(p =>
-        updateDoc(doc(db, "groups", groupId, "players", p.id), {
-          doublesElo: Math.max((p.doublesElo ?? 1000) - change, 800),
-          losses: (p.losses ?? 0) + 1,
-        })
-      ),
-    ]);
-
-    // Persist updated bracket
+    // ── Bracket update first — this must always succeed ──
     await setDoc(doc(db, "groups", groupId, "tournaments", "active"), {
       ...activeTournament,
       bracket: serializeBracket(rounds),
       ...(isFinal ? { winner, status: "finished" } : {}),
     });
+
+    // ── ELO updates — best-effort, don't block the bracket advance ──
+    try {
+      const winnerAvg = winner.players.reduce((s, p) => s + (p.doublesElo ?? 1000), 0) / winner.players.length;
+      const loserAvg  = loser.players.reduce((s, p)  => s + (p.doublesElo ?? 1000), 0) / loser.players.length;
+      const exp = 1 / (1 + Math.pow(10, (loserAvg - winnerAvg) / 400));
+      const change = Math.max(Math.round(32 * (1 - exp)), 4);
+
+      await Promise.all([...winner.players, ...loser.players].map(p =>
+        addDoc(collection(db, "groups", groupId, "players", p.id, "eloHistory"), {
+          singlesElo: p.singlesElo ?? 1000,
+          doublesElo: p.doublesElo ?? 1000,
+          timestamp: serverTimestamp(),
+        })
+      ));
+
+      await Promise.all([
+        ...winner.players.map(p =>
+          updateDoc(doc(db, "groups", groupId, "players", p.id), {
+            doublesElo: (p.doublesElo ?? 1000) + change,
+            wins: (p.wins ?? 0) + 1,
+          })
+        ),
+        ...loser.players.map(p =>
+          updateDoc(doc(db, "groups", groupId, "players", p.id), {
+            doublesElo: Math.max((p.doublesElo ?? 1000) - change, 800),
+            losses: (p.losses ?? 0) + 1,
+          })
+        ),
+      ]);
+    } catch (e) {
+      console.error("Tournament ELO update failed:", e);
+    }
   }
 
   async function handleArchive() {
