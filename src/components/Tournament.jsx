@@ -373,17 +373,36 @@ export default function Tournament({ players, currentUid, isAdmin, activeTournam
     const loser  = teamAWins >= teamBWins ? match.b : match.a;
 
     match.winner = winner;
+
+    // Place winner in the next round slot
     if (roundIdx + 1 < rounds.length) {
       const next = rounds[roundIdx + 1][Math.floor(matchIdx / 2)];
       if (matchIdx % 2 === 0) next.a = winner; else next.b = winner;
     }
-    const isFinal = roundIdx === rounds.length - 1;
+
+    // Cascade any BYEs that result from this advance (one team, no opponent)
+    for (let ri = roundIdx + 1; ri < rounds.length; ri++) {
+      rounds[ri].forEach((m, mi) => {
+        if (!m.winner) {
+          if (m.a && !m.b) m.winner = m.a;
+          else if (m.b && !m.a) m.winner = m.b;
+          if (m.winner && ri + 1 < rounds.length) {
+            const nx = rounds[ri + 1][Math.floor(mi / 2)];
+            if (mi % 2 === 0) nx.a = m.winner; else nx.b = m.winner;
+          }
+        }
+      });
+    }
+
+    // Tournament is finished if the final round now has a winner
+    const champion = rounds[rounds.length - 1][0]?.winner ?? null;
+    const isFinal = !!champion;
 
     // ── Bracket update first — this must always succeed ──
     await setDoc(doc(db, "groups", groupId, "tournaments", "active"), {
       ...activeTournament,
       bracket: serializeBracket(rounds),
-      ...(isFinal ? { winner, status: "finished" } : {}),
+      ...(isFinal ? { winner: champion, status: "finished" } : {}),
     });
 
     // ── ELO updates — best-effort, don't block the bracket advance ──
