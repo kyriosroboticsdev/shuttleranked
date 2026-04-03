@@ -403,48 +403,60 @@ export default function Tournament({ players, currentUid, isAdmin, activeTournam
   // both feeder matches from the previous round are already decided.
   // If yes → the missing opponent is never coming → auto-advance the lone team.
   // Repeat until no more BYEs can be resolved.
-  let changed = true;
-  while (changed) {
-    changed = false;
-    for (let ri = 1; ri < rounds.length; ri++) {
-      for (let mi = 0; mi < rounds[ri].length; mi++) {
-        const m = rounds[ri][mi];
-        if (m.winner) continue; // already decided
-        if (m.a && m.b) continue; // both teams present, real match needed
+  // ── BYE cascade loop ──
+let changed = true;
+while (changed) {
+  changed = false;
+  for (let ri = 1; ri < rounds.length; ri++) {
+    for (let mi = 0; mi < rounds[ri].length; mi++) {
+      const m = rounds[ri][mi];
+      if (m.winner) continue;
 
-        const loneTeam = m.a ?? m.b;
-        if (!loneTeam) continue; // neither slot filled yet, nothing to do
+      const hasA = m.a !== null;
+      const hasB = m.b !== null;
 
-        // Check if the missing feeder match is decided
-        // Each match at [ri][mi] is fed by [ri-1][mi*2] and [ri-1][mi*2+1]
-        const feederA = rounds[ri - 1][mi * 2];
-        const feederB = rounds[ri - 1][mi * 2 + 1];
+      // If both slots filled — real match, skip
+      if (hasA && hasB) continue;
+      // If neither slot filled — nothing to do yet
+      if (!hasA && !hasB) continue;
 
-        // The empty slot corresponds to whichever feeder hasn't produced a winner
-        const missingSlotIsA = !m.a;
-        const missingFeeder = missingSlotIsA ? feederA : feederB;
+      // One slot filled, one empty — check if the missing feeder is done
+      const loneTeam = hasA ? m.a : m.b;
 
-        if (!missingFeeder) continue; // feeder doesn't exist (odd bracket edge case)
+      // Feeders for match mi in round ri come from round ri-1
+      // match mi feeds from [ri-1][mi*2] (for slot a) and [ri-1][mi*2+1] (for slot b)
+      const feederForA = rounds[ri - 1]?.[mi * 2];
+      const feederForB = rounds[ri - 1]?.[mi * 2 + 1];
+      const missingFeeder = hasA ? feederForB : feederForA;
 
-        // If the missing feeder is decided (has a winner or is itself a null vs null)
-        // then no real opponent is coming — auto-advance the lone team
-        const feederDone = missingFeeder.winner !== null ||
-                           (!missingFeeder.a && !missingFeeder.b);
+      if (!missingFeeder) {
+        // No feeder exists at all — auto advance
+        m.winner = loneTeam;
+        changed = true;
+        if (ri + 1 < rounds.length) {
+          const nx = rounds[ri + 1][Math.floor(mi / 2)];
+          if (mi % 2 === 0) nx.a = loneTeam;
+          else nx.b = loneTeam;
+        }
+        continue;
+      }
 
-        if (feederDone) {
-          m.winner = loneTeam;
-          changed = true;
+      // Feeder is done if it has a winner, or if it's an empty BYE (both null)
+      const feederDone = !!missingFeeder.winner ||
+                         (!missingFeeder.a && !missingFeeder.b);
 
-          // Place into next round
-          if (ri + 1 < rounds.length) {
-            const nextMatch = rounds[ri + 1][Math.floor(mi / 2)];
-            if (mi % 2 === 0) nextMatch.a = loneTeam;
-            else nextMatch.b = loneTeam;
-          }
+      if (feederDone) {
+        m.winner = loneTeam;
+        changed = true;
+        if (ri + 1 < rounds.length) {
+          const nx = rounds[ri + 1][Math.floor(mi / 2)];
+          if (mi % 2 === 0) nx.a = loneTeam;
+          else nx.b = loneTeam;
         }
       }
     }
   }
+}
 
   // Crown champion only if the final match was just won by human input
   // OR if it was auto-resolved by the BYE cascade above
