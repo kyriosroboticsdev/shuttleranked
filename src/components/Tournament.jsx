@@ -99,7 +99,12 @@ function buildBracket(teams) {
 
   const rounds = [];
   let current = seeded.reduce((acc, _, i, arr) => {
-    if (i % 2 === 0) acc.push({ a: arr[i], b: arr[i + 1] ?? null, winner: null });
+    if (i % 2 === 0) acc.push({
+      a: arr[i],
+      b: arr[i + 1] ?? null,
+      winner: null,
+      isBye: !arr[i] || !arr[i + 1], // mark BYE matches
+    });
     return acc;
   }, []);
   rounds.push(current);
@@ -107,37 +112,26 @@ function buildBracket(teams) {
   while (current.length > 1) {
     const next = Array.from(
       { length: Math.floor(current.length / 2) },
-      () => ({ a: null, b: null, winner: null })
+      () => ({ a: null, b: null, winner: null, isBye: false })
     );
     rounds.push(next);
     current = next;
   }
 
-  // Resolve all BYEs at build time — cascade until every BYE team
-  // lands in a match that has a real opponent waiting, or reaches the final.
-  // This runs round by round so we never skip a round that has real matches.
-  for (let ri = 0; ri < rounds.length; ri++) {
-    rounds[ri].forEach((m, mi) => {
-      // A BYE match: exactly one team, no opponent, no winner yet
-      const byeTeam = (!m.winner && m.a && !m.b) ? m.a
-                    : (!m.winner && m.b && !m.a) ? m.b
-                    : null;
-      if (!byeTeam) return;
-
-      // Auto-advance the BYE team — no ELO change, no human click needed
-      m.winner = byeTeam;
-
-      // Place into next round
-      const nextMatch = rounds[ri + 1]?.[Math.floor(mi / 2)];
-      if (!nextMatch) return;
-      if (mi % 2 === 0) nextMatch.a = byeTeam;
-      else nextMatch.b = byeTeam;
-    });
-  }
+  // Resolve round 0 BYEs only — place winner into round 1 slot
+  rounds[0].forEach((m, mi) => {
+    if (!m.isBye) return;
+    const byeTeam = m.a ?? m.b;
+    if (!byeTeam) return;
+    m.winner = byeTeam;
+    const nextMatch = rounds[1]?.[Math.floor(mi / 2)];
+    if (!nextMatch) return;
+    if (mi % 2 === 0) nextMatch.a = byeTeam;
+    else nextMatch.b = byeTeam;
+  });
 
   return rounds;
 }
-
 // ── Firestore serialization (no nested arrays allowed) ──
 function serializeBracket(rounds) {
   return rounds.map((matches, ri) => ({
@@ -147,6 +141,7 @@ function serializeBracket(rounds) {
       a: m.a ?? null,
       b: m.b ?? null,
       winner: m.winner ?? null,
+      isBye: m.isBye ?? false,
     })),
   }));
 }
@@ -158,10 +153,10 @@ function deserializeBracket(serialized) {
       a: m.a ?? null,
       b: m.b ?? null,
       winner: m.winner ?? null,
+      isBye: m.isBye ?? false,
     }))
   );
 }
-
 // ── Helpers ──
 function teamLabel(t) {
   if (!t) return "BYE";
@@ -329,15 +324,21 @@ function LiveBracket({ tournament, canAdvance, onMatchClick, onArchive }) {
                             color: "var(--text)",
                           }}>
                             <span style={{ fontSize: 10, color: "var(--text-hint)", minWidth: 14 }}>{ri === 0 ? mi * 2 + ti + 1 : ""}</span>
-                            <span>{team ? teamLabel(team) : "TBD"}</span>
+                            <span>{team ? teamLabel(team) : (canAdvance ? "— waiting —" : "TBD")}</span>
                             {isWinner && <span style={{ marginLeft: "auto", fontSize: 10, color: "#22c55e" }}>✓</span>}
                           </div>
                           );
                         })}
-                        {clickable && (
-                          <div style={{ padding: "4px 10px", fontSize: 10, color: "var(--text-hint)", borderTop: "1px solid var(--border)", background: "var(--bg-secondary)", textAlign: "center" }}>
-                            Tap to enter score
-                          </div>
+                        {canAdvance && !m.winner && m.a && m.b && (
+                            <div style={{ padding: "4px 10px", fontSize: 10, color: "var(--text-hint)", borderTop: "1px solid var(--border)", background: "var(--bg-secondary)", textAlign: "center" }}>
+                              Tap to enter score
+                            </div>
+                          )}
+                          {canAdvance && !m.winner && (m.a || m.b) && !(m.a && m.b) && (
+                            <div style={{ padding: "4px 10px", fontSize: 10, color: "var(--text-hint)", borderTop: "1px solid var(--border)", background: "var(--bg-secondary)", textAlign: "center" }}>
+                              Waiting for opponent...
+                            </div>
+                          )}
                         )}
                       </div>
                     );
@@ -378,42 +379,44 @@ export default function Tournament({ players, currentUid, isAdmin, activeTournam
   async function handleAdvance(roundIdx, matchIdx, sets) {
   if (!activeTournament) return;
   const rounds = deserializeBracket(activeTournament.bracket);
+  console.log("Round 1 state when advancing:", JSON.stringify(rounds[1], null, 2));
   const match = rounds[roundIdx][matchIdx];
 
-  // Guard: must have two real teams and no existing winner
   if (match.winner || !match.a || !match.b) return;
 
-  // Determine winner from set scores
   const teamAWins = sets.filter(s => s.w > s.l).length;
   const teamBWins = sets.filter(s => s.l > s.w).length;
   const winner = teamAWins >= teamBWins ? match.a : match.b;
   const loser  = teamAWins >= teamBWins ? match.b : match.a;
   match.winner = winner;
 
-  // Place winner into the correct slot in the next round
+  // Place winner into next round
   const nextRoundIdx = roundIdx + 1;
   if (nextRoundIdx < rounds.length) {
-    const nextMatch = rounds[nextRoundIdx][Math.floor(matchIdx / 2)];
+    const nextMatchIdx = Math.floor(matchIdx / 2);
+    const nextMatch = rounds[nextRoundIdx][nextMatchIdx];
     if (matchIdx % 2 === 0) nextMatch.a = winner;
     else nextMatch.b = winner;
-    // Never auto-resolve the next match — always wait for a human result
+
+    // After placing, check if the next match is now fully populated
+    // AND one side came from a bye (isBye) with no real opponent —
+    // meaning the slot was pre-filled but the match was never a real contest.
+    // In that case, DON'T auto-advance. The human must click to record the match.
+    // This is intentional — even a BYE recipient must play real matches.
   }
 
-  // Only crown champion when BOTH teams in the final have played a real match
-  // i.e. the final match has two teams AND someone just submitted a result for it
+  // Crown champion only when the final match has been won by human input
   const finalRound = rounds[rounds.length - 1];
-  const finalMatch = finalRound[0];
-  const isFinal = roundIdx === rounds.length - 1 && !!finalMatch.winner;
-  const champion = isFinal ? finalMatch.winner : null;
+  const isFinal = roundIdx === rounds.length - 1 && !!finalRound[0].winner;
+  const champion = isFinal ? finalRound[0].winner : null;
 
-  // Write bracket to Firestore
   await setDoc(doc(db, "groups", groupId, "tournaments", "active"), {
     ...activeTournament,
     bracket: serializeBracket(rounds),
     ...(isFinal ? { winner: champion, status: "finished" } : {}),
   });
 
-  // ELO updates — best effort, don't block bracket advance
+  // ELO updates
   try {
     const winnerAvg = winner.players.reduce((s, p) => s + (p.doublesElo ?? 1000), 0) / winner.players.length;
     const loserAvg  = loser.players.reduce((s, p)  => s + (p.doublesElo ?? 1000), 0) / loser.players.length;
