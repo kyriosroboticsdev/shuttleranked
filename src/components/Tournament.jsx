@@ -107,15 +107,19 @@ function buildBracket(teams) {
     rounds.push(next);
     current = next;
   }
-  // Auto-resolve BYE matches and propagate their winners into round 2
-  rounds[0].forEach((m, mi) => {
-    if (m.a && !m.b) m.winner = m.a;
-    if (m.b && !m.a) m.winner = m.b;
-    if (m.winner && rounds.length > 1) {
-      const next = rounds[1][Math.floor(mi / 2)];
-      if (mi % 2 === 0) next.a = m.winner; else next.b = m.winner;
-    }
-  });
+  // Cascade BYE resolution: walk every round in order so that a BYE in
+  // round 1 can itself produce a BYE in round 2, and so on (handles 5-, 6-,
+  // 7-team brackets where a team may receive multiple consecutive byes).
+  for (let ri = 0; ri < rounds.length; ri++) {
+    rounds[ri].forEach((m, mi) => {
+      if (m.a && !m.b) m.winner = m.a;
+      if (m.b && !m.a) m.winner = m.b;
+      if (m.winner && ri + 1 < rounds.length) {
+        const next = rounds[ri + 1][Math.floor(mi / 2)];
+        if (mi % 2 === 0) next.a = m.winner; else next.b = m.winner;
+      }
+    });
+  }
   return rounds;
 }
 
