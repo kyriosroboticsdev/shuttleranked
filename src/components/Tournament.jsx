@@ -2,6 +2,63 @@ import { useState } from "react";
 import { doc, setDoc, deleteDoc, addDoc, updateDoc, collection, serverTimestamp } from "firebase/firestore";
 import { db } from "../firebase";
 
+// ── Score entry modal (mirrors the doubles flow in NotificationPopup) ──
+function TournamentScoreModal({ matchObj, onSubmit, onClose }) {
+  const [sets, setSets] = useState([{ w: "", l: "" }]);
+  const valid = sets.length > 0 && sets.every(s => s.w !== "" && s.l !== "");
+
+  const overlay = {
+    position: "fixed", top: 0, left: 0, right: 0, bottom: 0,
+    background: "rgba(0,0,0,0.55)", zIndex: 1000,
+    display: "flex", alignItems: "center", justifyContent: "center", padding: "1rem",
+  };
+  const card = {
+    background: "var(--bg-card)", borderRadius: 16, padding: "1.5rem",
+    width: "100%", maxWidth: 400, border: "1px solid var(--border)",
+  };
+
+  return (
+    <div style={overlay} onClick={onClose}>
+      <div style={card} onClick={e => e.stopPropagation()}>
+        <div style={{ fontSize: 11, color: "var(--text-hint)", textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: "0.5rem" }}>Tournament match</div>
+        <div style={{ fontSize: 16, fontWeight: 500, color: "var(--text)", marginBottom: 4 }}>
+          {teamLabel(matchObj.a)} vs {teamLabel(matchObj.b)}
+        </div>
+        <div style={{ fontSize: 13, color: "var(--text-secondary)", marginBottom: "1rem" }}>
+          Enter score — winner's points on the left
+        </div>
+        {sets.map((s, i) => (
+          <div key={i} style={{ display: "grid", gridTemplateColumns: "1fr auto 1fr", gap: 8, marginBottom: 8, alignItems: "center" }}>
+            <input type="number" placeholder="Winner" value={s.w}
+              onChange={e => { const n = [...sets]; n[i] = { ...n[i], w: e.target.value }; setSets(n); }}
+              style={{ textAlign: "center", padding: "8px", borderRadius: 6, border: "1px solid var(--border-mid)", background: "var(--bg)", color: "var(--text)", fontSize: 14 }} />
+            <span style={{ fontSize: 12, color: "var(--text-hint)", textAlign: "center" }}>Set {i + 1}</span>
+            <input type="number" placeholder="Loser" value={s.l}
+              onChange={e => { const n = [...sets]; n[i] = { ...n[i], l: e.target.value }; setSets(n); }}
+              style={{ textAlign: "center", padding: "8px", borderRadius: 6, border: "1px solid var(--border-mid)", background: "var(--bg)", color: "var(--text)", fontSize: 14 }} />
+          </div>
+        ))}
+        <button onClick={() => setSets([...sets, { w: "", l: "" }])}
+          style={{ fontSize: 12, color: "var(--text-secondary)", background: "none", border: "none", cursor: "pointer", textDecoration: "underline", marginBottom: "1rem" }}>
+          + Add set
+        </button>
+        <div style={{ display: "flex", gap: 8 }}>
+          <button onClick={onClose}
+            style={{ flex: 1, padding: "10px 16px", fontSize: 14, border: "none", borderRadius: 8, cursor: "pointer", background: "var(--bg-secondary)", color: "var(--text)" }}>
+            Cancel
+          </button>
+          <button
+            onClick={() => onSubmit(sets.map(s => ({ w: parseInt(s.w), l: parseInt(s.l) })))}
+            disabled={!valid}
+            style={{ flex: 1, padding: "10px 16px", fontSize: 14, fontWeight: 500, border: "none", borderRadius: 8, cursor: valid ? "pointer" : "not-allowed", background: valid ? "var(--text)" : "var(--border-mid)", color: valid ? "var(--bg)" : "var(--text-hint)" }}>
+            Submit & advance
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Tier assignment ──
 function assignTiers(players) {
   const sorted = [...players].sort((a, b) => b.doublesElo - a.doublesElo);
@@ -193,9 +250,9 @@ function ManualPairing({ players, onDone, onBack }) {
 }
 
 // ── Live bracket view ──
-function LiveBracket({ tournament, canAdvance, onAdvance, onArchive }) {
+function LiveBracket({ tournament, canAdvance, onMatchClick, onArchive }) {
   const bracket = deserializeBracket(tournament.bracket);
-  const { teams, winner: champion } = tournament;
+  const { winner: champion } = tournament;
   if (!bracket?.length) return null;
   const labels = roundLabels(bracket.length);
 
@@ -221,25 +278,43 @@ function LiveBracket({ tournament, canAdvance, onAdvance, onArchive }) {
               <div style={{ minWidth: 190 }}>
                 <div style={{ fontSize: 11, color: "var(--text-hint)", textAlign: "center", marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.05em" }}>{labels[ri]}</div>
                 <div style={{ display: "flex", flexDirection: "column", justifyContent: "space-around", height: "calc(100% - 24px)" }}>
-                  {matches.map((m, mi) => (
-                    <div key={mi} style={{ margin: "6px 8px", border: ri === bracket.length - 1 ? "1.5px solid #EF9F27" : "1px solid var(--border)", borderRadius: 8, overflow: "hidden", background: "var(--bg-card)" }}>
-                      {[{ team: m.a, side: "a" }, { team: m.b, side: "b" }].map(({ team, side }, ti) => (
-                        <div key={side}
-                          onClick={() => canAdvance && !m.winner && team && onAdvance(ri, mi, side)}
-                          style={{
+                  {matches.map((m, mi) => {
+                    const clickable = canAdvance && !m.winner && m.a && m.b;
+                    return (
+                      <div key={mi}
+                        onClick={() => clickable && onMatchClick(ri, mi, m)}
+                        style={{
+                          margin: "6px 8px",
+                          border: ri === bracket.length - 1 ? "1.5px solid #EF9F27" : "1px solid var(--border)",
+                          borderRadius: 8, overflow: "hidden", background: "var(--bg-card)",
+                          cursor: clickable ? "pointer" : "default",
+                          transition: "box-shadow 0.12s",
+                          boxShadow: clickable ? undefined : "none",
+                        }}
+                        onMouseEnter={e => { if (clickable) e.currentTarget.style.boxShadow = "0 0 0 2px #185FA5"; }}
+                        onMouseLeave={e => { e.currentTarget.style.boxShadow = "none"; }}
+                      >
+                        {[{ team: m.a, side: "a" }, { team: m.b, side: "b" }].map(({ team, side }, ti) => (
+                          <div key={side} style={{
                             padding: "8px 10px", fontSize: 12, display: "flex", alignItems: "center", gap: 6,
                             borderTop: ti > 0 ? "1px solid var(--border)" : "none",
                             background: m.winner && m.winner === team ? "var(--bg-secondary)" : "var(--bg-card)",
                             fontWeight: m.winner && m.winner === team ? 500 : 400,
                             color: "var(--text)",
-                            cursor: canAdvance && !m.winner && team ? "pointer" : "default",
                           }}>
-                          <span style={{ fontSize: 10, color: "var(--text-hint)", minWidth: 14 }}>{ri === 0 ? mi * 2 + ti + 1 : ""}</span>
-                          <span>{team ? teamLabel(team) : "TBD"}</span>
-                        </div>
-                      ))}
-                    </div>
-                  ))}
+                            <span style={{ fontSize: 10, color: "var(--text-hint)", minWidth: 14 }}>{ri === 0 ? mi * 2 + ti + 1 : ""}</span>
+                            <span>{team ? teamLabel(team) : "TBD"}</span>
+                            {m.winner && m.winner === team && <span style={{ marginLeft: "auto", fontSize: 10, color: "#22c55e" }}>✓</span>}
+                          </div>
+                        ))}
+                        {clickable && (
+                          <div style={{ padding: "4px 10px", fontSize: 10, color: "var(--text-hint)", borderTop: "1px solid var(--border)", background: "var(--bg-secondary)", textAlign: "center" }}>
+                            Tap to enter score
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
               {ri < bracket.length - 1 && (
@@ -270,53 +345,60 @@ export default function Tournament({ players, currentUid, isAdmin, activeTournam
   const n = selectedIds.size;
   const canProceed = n >= 4 && n % 2 === 0;
 
-  // ── These must be at top level, not inside if blocks ──
-  async function handleAdvance(roundIdx, matchIdx, side) {
+  // Tracks which match is open for score entry: { roundIdx, matchIdx, matchObj }
+  const [scoringMatch, setScoringMatch] = useState(null);
+
+  async function handleAdvance(roundIdx, matchIdx, sets) {
     if (!activeTournament) return;
     const rounds = deserializeBracket(activeTournament.bracket);
     const match = rounds[roundIdx][matchIdx];
-    if (match.winner) return;
-    const winner = side === "a" ? match.a : match.b;
-    const loser = side === "a" ? match.b : match.a;
-    if (!winner) return;
+    if (match.winner || !match.a || !match.b) return;
+
+    // Determine winner from set scores (most sets won)
+    const teamAWins = sets.filter(s => s.w > s.l).length;
+    const teamBWins = sets.filter(s => s.l > s.w).length;
+    const winner = teamAWins >= teamBWins ? match.a : match.b;
+    const loser  = teamAWins >= teamBWins ? match.b : match.a;
+
     match.winner = winner;
     if (roundIdx + 1 < rounds.length) {
       const next = rounds[roundIdx + 1][Math.floor(matchIdx / 2)];
-      if (matchIdx % 2 === 0) next.a = winner;
-      else next.b = winner;
+      if (matchIdx % 2 === 0) next.a = winner; else next.b = winner;
     }
     const isFinal = roundIdx === rounds.length - 1;
 
-    if (loser) {
-      const winnerAvg = winner.avgElo ?? winner.players.reduce((s, p) => s + p.doublesElo, 0) / winner.players.length;
-      const loserAvg = loser.avgElo ?? loser.players.reduce((s, p) => s + p.doublesElo, 0) / loser.players.length;
-      const exp = 1 / (1 + Math.pow(10, (loserAvg - winnerAvg) / 400));
-      const change = Math.max(Math.round(32 * (1 - exp)), 4);
+    // ELO update (doubles)
+    const winnerAvg = winner.players.reduce((s, p) => s + (p.doublesElo ?? 1000), 0) / winner.players.length;
+    const loserAvg  = loser.players.reduce((s, p)  => s + (p.doublesElo ?? 1000), 0) / loser.players.length;
+    const exp = 1 / (1 + Math.pow(10, (loserAvg - winnerAvg) / 400));
+    const change = Math.max(Math.round(32 * (1 - exp)), 4);
 
-      const updates = [
-        ...winner.players.map(p => ({
-          id: p.id,
+    // Snapshot ELO history before the change
+    await Promise.all([...winner.players, ...loser.players].map(p =>
+      addDoc(collection(db, "groups", groupId, "players", p.id, "eloHistory"), {
+        singlesElo: p.singlesElo ?? 1000,
+        doublesElo: p.doublesElo ?? 1000,
+        timestamp: serverTimestamp(),
+      })
+    ));
+
+    // Apply ELO deltas to player docs
+    await Promise.all([
+      ...winner.players.map(p =>
+        updateDoc(doc(db, "groups", groupId, "players", p.id), {
           doublesElo: (p.doublesElo ?? 1000) + change,
           wins: (p.wins ?? 0) + 1,
-        })),
-        ...loser.players.map(p => ({
-          id: p.id,
+        })
+      ),
+      ...loser.players.map(p =>
+        updateDoc(doc(db, "groups", groupId, "players", p.id), {
           doublesElo: Math.max((p.doublesElo ?? 1000) - change, 800),
           losses: (p.losses ?? 0) + 1,
-        })),
-      ];
-
-      await Promise.all([...winner.players, ...loser.players].map(p =>
-        addDoc(collection(db, "players", p.id, "eloHistory"), {
-          singlesElo: p.singlesElo,
-          doublesElo: type === "doubles"
-            ? (winner.players.includes(p) ? p.doublesElo + change : Math.max(p.doublesElo - change, 800))
-            : p.doublesElo,
-          timestamp: serverTimestamp(),
         })
-      ));
-    }
+      ),
+    ]);
 
+    // Persist updated bracket
     await setDoc(doc(db, "groups", groupId, "tournaments", "active"), {
       ...activeTournament,
       bracket: serializeBracket(rounds),
@@ -432,9 +514,19 @@ export default function Tournament({ players, currentUid, isAdmin, activeTournam
         <LiveBracket
           tournament={activeTournament}
           canAdvance={isCreator && !isFinished}
-          onAdvance={handleAdvance}
+          onMatchClick={(ri, mi, m) => setScoringMatch({ roundIdx: ri, matchIdx: mi, matchObj: m })}
           onArchive={handleArchive}
         />
+        {scoringMatch && (
+          <TournamentScoreModal
+            matchObj={scoringMatch.matchObj}
+            onClose={() => setScoringMatch(null)}
+            onSubmit={async sets => {
+              setScoringMatch(null);
+              await handleAdvance(scoringMatch.roundIdx, scoringMatch.matchIdx, sets);
+            }}
+          />
+        )}
         {saving && (
           <div style={{ textAlign: "center", padding: "1rem", color: "var(--text-secondary)", fontSize: 13 }}>
             Archiving tournament...
