@@ -96,30 +96,35 @@ function buildBracket(teams) {
   const size = nextPow2(shuffled.length);
   const seeded = [...shuffled];
   while (seeded.length < size) seeded.push(null);
+
   const rounds = [];
   let current = seeded.reduce((acc, _, i, arr) => {
     if (i % 2 === 0) acc.push({ a: arr[i], b: arr[i + 1] ?? null, winner: null });
     return acc;
   }, []);
   rounds.push(current);
+
   while (current.length > 1) {
-    const next = Array.from({ length: Math.floor(current.length / 2) }, () => ({ a: null, b: null, winner: null }));
+    const next = Array.from(
+      { length: Math.floor(current.length / 2) },
+      () => ({ a: null, b: null, winner: null })
+    );
     rounds.push(next);
     current = next;
   }
-  // Only resolve BYEs in round 0 — don't cascade further
-  // A BYE match (one team, no opponent) auto-advances that team into round 1
+
+  // Round 0 only: resolve BYEs and place those winners into round 1 slots.
+  // Do NOT cascade further — every subsequent match needs a human result.
   rounds[0].forEach((m, mi) => {
-    if (m.a && !m.b) {
-      m.winner = m.a;
-      const next = rounds[1]?.[Math.floor(mi / 2)];
-      if (next) { if (mi % 2 === 0) next.a = m.a; else next.b = m.a; }
-    } else if (m.b && !m.a) {
-      m.winner = m.b;
-      const next = rounds[1]?.[Math.floor(mi / 2)];
-      if (next) { if (mi % 2 === 0) next.a = m.b; else next.b = m.b; }
-    }
+    const byeTeam = (m.a && !m.b) ? m.a : (!m.a && m.b) ? m.b : null;
+    if (!byeTeam) return;
+    m.winner = byeTeam;
+    const nextMatch = rounds[1]?.[Math.floor(mi / 2)];
+    if (!nextMatch) return;
+    if (mi % 2 === 0) nextMatch.a = byeTeam;
+    else nextMatch.b = byeTeam;
   });
+
   return rounds;
 }
 
@@ -364,57 +369,41 @@ export default function Tournament({ players, currentUid, isAdmin, activeTournam
   if (!activeTournament) return;
   const rounds = deserializeBracket(activeTournament.bracket);
   const match = rounds[roundIdx][matchIdx];
+
+  // Guard: must have two real teams and no existing winner
   if (match.winner || !match.a || !match.b) return;
 
-  // Determine winner from sets
+  // Determine winner from set scores
   const teamAWins = sets.filter(s => s.w > s.l).length;
   const teamBWins = sets.filter(s => s.l > s.w).length;
   const winner = teamAWins >= teamBWins ? match.a : match.b;
   const loser  = teamAWins >= teamBWins ? match.b : match.a;
   match.winner = winner;
 
-  // Place winner into next round slot
+  // Place winner into the correct slot in the next round
   const nextRoundIdx = roundIdx + 1;
   if (nextRoundIdx < rounds.length) {
     const nextMatch = rounds[nextRoundIdx][Math.floor(matchIdx / 2)];
     if (matchIdx % 2 === 0) nextMatch.a = winner;
     else nextMatch.b = winner;
-
-    // Only cascade a BYE in the very next match — one step only
-    // This handles cases like a 6-team bracket where round 2 might have a bye
-    if (nextMatch.a && !nextMatch.b) {
-      nextMatch.winner = nextMatch.a;
-      const nnIdx = nextRoundIdx + 1;
-      if (nnIdx < rounds.length) {
-        const nnMatch = rounds[nnIdx][Math.floor(Math.floor(matchIdx / 2) / 2)];
-        if (Math.floor(matchIdx / 2) % 2 === 0) nnMatch.a = nextMatch.a;
-        else nnMatch.b = nextMatch.a;
-      }
-    } else if (nextMatch.b && !nextMatch.a) {
-      nextMatch.winner = nextMatch.b;
-      const nnIdx = nextRoundIdx + 1;
-      if (nnIdx < rounds.length) {
-        const nnMatch = rounds[nnIdx][Math.floor(Math.floor(matchIdx / 2) / 2)];
-        if (Math.floor(matchIdx / 2) % 2 === 0) nnMatch.a = nextMatch.b;
-        else nnMatch.b = nextMatch.b;
-      }
-    }
+    // Never auto-resolve the next match — always wait for a human result
   }
 
-  // Only crown champion if ALL matches in the final round have a winner
+  // Only crown champion when BOTH teams in the final have played a real match
+  // i.e. the final match has two teams AND someone just submitted a result for it
   const finalRound = rounds[rounds.length - 1];
-  const allFinalsDone = finalRound.every(m => m.winner !== null);
-  const champion = allFinalsDone ? finalRound[0].winner : null;
-  const isFinal = !!champion;
+  const finalMatch = finalRound[0];
+  const isFinal = roundIdx === rounds.length - 1 && !!finalMatch.winner;
+  const champion = isFinal ? finalMatch.winner : null;
 
-  // Update bracket in Firestore
+  // Write bracket to Firestore
   await setDoc(doc(db, "groups", groupId, "tournaments", "active"), {
     ...activeTournament,
     bracket: serializeBracket(rounds),
     ...(isFinal ? { winner: champion, status: "finished" } : {}),
   });
 
-  // ELO updates (best effort)
+  // ELO updates — best effort, don't block bracket advance
   try {
     const winnerAvg = winner.players.reduce((s, p) => s + (p.doublesElo ?? 1000), 0) / winner.players.length;
     const loserAvg  = loser.players.reduce((s, p)  => s + (p.doublesElo ?? 1000), 0) / loser.players.length;
