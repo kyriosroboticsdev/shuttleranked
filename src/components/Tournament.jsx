@@ -379,11 +379,11 @@ export default function Tournament({ players, currentUid, isAdmin, activeTournam
   async function handleAdvance(roundIdx, matchIdx, sets) {
   if (!activeTournament) return;
   const rounds = deserializeBracket(activeTournament.bracket);
-  console.log("Round 1 state when advancing:", JSON.stringify(rounds[1], null, 2));
   const match = rounds[roundIdx][matchIdx];
 
   if (match.winner || !match.a || !match.b) return;
 
+  // Determine winner from sets
   const teamAWins = sets.filter(s => s.w > s.l).length;
   const teamBWins = sets.filter(s => s.l > s.w).length;
   const winner = teamAWins >= teamBWins ? match.a : match.b;
@@ -391,24 +391,67 @@ export default function Tournament({ players, currentUid, isAdmin, activeTournam
   match.winner = winner;
 
   // Place winner into next round
-  const nextRoundIdx = roundIdx + 1;
-  if (nextRoundIdx < rounds.length) {
-    const nextMatchIdx = Math.floor(matchIdx / 2);
-    const nextMatch = rounds[nextRoundIdx][nextMatchIdx];
+  if (roundIdx + 1 < rounds.length) {
+    const nextMatch = rounds[roundIdx + 1][Math.floor(matchIdx / 2)];
     if (matchIdx % 2 === 0) nextMatch.a = winner;
     else nextMatch.b = winner;
-
-    // After placing, check if the next match is now fully populated
-    // AND one side came from a bye (isBye) with no real opponent —
-    // meaning the slot was pre-filled but the match was never a real contest.
-    // In that case, DON'T auto-advance. The human must click to record the match.
-    // This is intentional — even a BYE recipient must play real matches.
   }
 
-  // Crown champion only when the final match has been won by human input
+  // ── BYE cascade loop ──
+  // After every advance, scan all rounds from the beginning.
+  // If a match has one team and the other slot is null, check whether
+  // both feeder matches from the previous round are already decided.
+  // If yes → the missing opponent is never coming → auto-advance the lone team.
+  // Repeat until no more BYEs can be resolved.
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (let ri = 1; ri < rounds.length; ri++) {
+      for (let mi = 0; mi < rounds[ri].length; mi++) {
+        const m = rounds[ri][mi];
+        if (m.winner) continue; // already decided
+        if (m.a && m.b) continue; // both teams present, real match needed
+
+        const loneTeam = m.a ?? m.b;
+        if (!loneTeam) continue; // neither slot filled yet, nothing to do
+
+        // Check if the missing feeder match is decided
+        // Each match at [ri][mi] is fed by [ri-1][mi*2] and [ri-1][mi*2+1]
+        const feederA = rounds[ri - 1][mi * 2];
+        const feederB = rounds[ri - 1][mi * 2 + 1];
+
+        // The empty slot corresponds to whichever feeder hasn't produced a winner
+        const missingSlotIsA = !m.a;
+        const missingFeeder = missingSlotIsA ? feederA : feederB;
+
+        if (!missingFeeder) continue; // feeder doesn't exist (odd bracket edge case)
+
+        // If the missing feeder is decided (has a winner or is itself a null vs null)
+        // then no real opponent is coming — auto-advance the lone team
+        const feederDone = missingFeeder.winner !== null ||
+                           (!missingFeeder.a && !missingFeeder.b);
+
+        if (feederDone) {
+          m.winner = loneTeam;
+          changed = true;
+
+          // Place into next round
+          if (ri + 1 < rounds.length) {
+            const nextMatch = rounds[ri + 1][Math.floor(mi / 2)];
+            if (mi % 2 === 0) nextMatch.a = loneTeam;
+            else nextMatch.b = loneTeam;
+          }
+        }
+      }
+    }
+  }
+
+  // Crown champion only if the final match was just won by human input
+  // OR if it was auto-resolved by the BYE cascade above
   const finalRound = rounds[rounds.length - 1];
-  const isFinal = roundIdx === rounds.length - 1 && !!finalRound[0].winner;
-  const champion = isFinal ? finalRound[0].winner : null;
+  const finalMatch = finalRound[0];
+  const isFinal = !!finalMatch.winner;
+  const champion = isFinal ? finalMatch.winner : null;
 
   await setDoc(doc(db, "groups", groupId, "tournaments", "active"), {
     ...activeTournament,
@@ -416,7 +459,7 @@ export default function Tournament({ players, currentUid, isAdmin, activeTournam
     ...(isFinal ? { winner: champion, status: "finished" } : {}),
   });
 
-  // ELO updates
+  // ELO updates — best effort
   try {
     const winnerAvg = winner.players.reduce((s, p) => s + (p.doublesElo ?? 1000), 0) / winner.players.length;
     const loserAvg  = loser.players.reduce((s, p)  => s + (p.doublesElo ?? 1000), 0) / loser.players.length;
