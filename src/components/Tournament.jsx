@@ -107,19 +107,19 @@ function buildBracket(teams) {
     rounds.push(next);
     current = next;
   }
-  // Cascade BYE resolution: walk every round in order so that a BYE in
-  // round 1 can itself produce a BYE in round 2, and so on (handles 5-, 6-,
-  // 7-team brackets where a team may receive multiple consecutive byes).
-  for (let ri = 0; ri < rounds.length; ri++) {
-    rounds[ri].forEach((m, mi) => {
-      if (m.a && !m.b) m.winner = m.a;
-      if (m.b && !m.a) m.winner = m.b;
-      if (m.winner && ri + 1 < rounds.length) {
-        const next = rounds[ri + 1][Math.floor(mi / 2)];
-        if (mi % 2 === 0) next.a = m.winner; else next.b = m.winner;
-      }
-    });
-  }
+  // Only resolve BYEs in round 0 — don't cascade further
+  // A BYE match (one team, no opponent) auto-advances that team into round 1
+  rounds[0].forEach((m, mi) => {
+    if (m.a && !m.b) {
+      m.winner = m.a;
+      const next = rounds[1]?.[Math.floor(mi / 2)];
+      if (next) { if (mi % 2 === 0) next.a = m.a; else next.b = m.a; }
+    } else if (m.b && !m.a) {
+      m.winner = m.b;
+      const next = rounds[1]?.[Math.floor(mi / 2)];
+      if (next) { if (mi % 2 === 0) next.a = m.b; else next.b = m.b; }
+    }
+  });
   return rounds;
 }
 
@@ -361,83 +361,92 @@ export default function Tournament({ players, currentUid, isAdmin, activeTournam
   const [scoringMatch, setScoringMatch] = useState(null);
 
   async function handleAdvance(roundIdx, matchIdx, sets) {
-    if (!activeTournament) return;
-    const rounds = deserializeBracket(activeTournament.bracket);
-    const match = rounds[roundIdx][matchIdx];
-    if (match.winner || !match.a || !match.b) return;
+  if (!activeTournament) return;
+  const rounds = deserializeBracket(activeTournament.bracket);
+  const match = rounds[roundIdx][matchIdx];
+  if (match.winner || !match.a || !match.b) return;
 
-    // Determine winner from set scores (most sets won)
-    const teamAWins = sets.filter(s => s.w > s.l).length;
-    const teamBWins = sets.filter(s => s.l > s.w).length;
-    const winner = teamAWins >= teamBWins ? match.a : match.b;
-    const loser  = teamAWins >= teamBWins ? match.b : match.a;
+  // Determine winner from sets
+  const teamAWins = sets.filter(s => s.w > s.l).length;
+  const teamBWins = sets.filter(s => s.l > s.w).length;
+  const winner = teamAWins >= teamBWins ? match.a : match.b;
+  const loser  = teamAWins >= teamBWins ? match.b : match.a;
+  match.winner = winner;
 
-    match.winner = winner;
+  // Place winner into next round slot
+  const nextRoundIdx = roundIdx + 1;
+  if (nextRoundIdx < rounds.length) {
+    const nextMatch = rounds[nextRoundIdx][Math.floor(matchIdx / 2)];
+    if (matchIdx % 2 === 0) nextMatch.a = winner;
+    else nextMatch.b = winner;
 
-    // Place winner in the next round slot
-    if (roundIdx + 1 < rounds.length) {
-      const next = rounds[roundIdx + 1][Math.floor(matchIdx / 2)];
-      if (matchIdx % 2 === 0) next.a = winner; else next.b = winner;
-    }
-
-    // Cascade any BYEs that result from this advance (one team, no opponent)
-    for (let ri = roundIdx + 1; ri < rounds.length; ri++) {
-      rounds[ri].forEach((m, mi) => {
-        if (!m.winner) {
-          if (m.a && !m.b) m.winner = m.a;
-          else if (m.b && !m.a) m.winner = m.b;
-          if (m.winner && ri + 1 < rounds.length) {
-            const nx = rounds[ri + 1][Math.floor(mi / 2)];
-            if (mi % 2 === 0) nx.a = m.winner; else nx.b = m.winner;
-          }
-        }
-      });
-    }
-
-    // Tournament is finished if the final round now has a winner
-    const champion = rounds[rounds.length - 1][0]?.winner ?? null;
-    const isFinal = !!champion;
-
-    // ── Bracket update first — this must always succeed ──
-    await setDoc(doc(db, "groups", groupId, "tournaments", "active"), {
-      ...activeTournament,
-      bracket: serializeBracket(rounds),
-      ...(isFinal ? { winner: champion, status: "finished" } : {}),
-    });
-
-    // ── ELO updates — best-effort, don't block the bracket advance ──
-    try {
-      const winnerAvg = winner.players.reduce((s, p) => s + (p.doublesElo ?? 1000), 0) / winner.players.length;
-      const loserAvg  = loser.players.reduce((s, p)  => s + (p.doublesElo ?? 1000), 0) / loser.players.length;
-      const exp = 1 / (1 + Math.pow(10, (loserAvg - winnerAvg) / 400));
-      const change = Math.max(Math.round(32 * (1 - exp)), 4);
-
-      await Promise.all([...winner.players, ...loser.players].map(p =>
-        addDoc(collection(db, "groups", groupId, "players", p.id, "eloHistory"), {
-          singlesElo: p.singlesElo ?? 1000,
-          doublesElo: p.doublesElo ?? 1000,
-          timestamp: serverTimestamp(),
-        })
-      ));
-
-      await Promise.all([
-        ...winner.players.map(p =>
-          updateDoc(doc(db, "groups", groupId, "players", p.id), {
-            doublesElo: (p.doublesElo ?? 1000) + change,
-            wins: (p.wins ?? 0) + 1,
-          })
-        ),
-        ...loser.players.map(p =>
-          updateDoc(doc(db, "groups", groupId, "players", p.id), {
-            doublesElo: Math.max((p.doublesElo ?? 1000) - change, 800),
-            losses: (p.losses ?? 0) + 1,
-          })
-        ),
-      ]);
-    } catch (e) {
-      console.error("Tournament ELO update failed:", e);
+    // Only cascade a BYE in the very next match — one step only
+    // This handles cases like a 6-team bracket where round 2 might have a bye
+    if (nextMatch.a && !nextMatch.b) {
+      nextMatch.winner = nextMatch.a;
+      const nnIdx = nextRoundIdx + 1;
+      if (nnIdx < rounds.length) {
+        const nnMatch = rounds[nnIdx][Math.floor(Math.floor(matchIdx / 2) / 2)];
+        if (Math.floor(matchIdx / 2) % 2 === 0) nnMatch.a = nextMatch.a;
+        else nnMatch.b = nextMatch.a;
+      }
+    } else if (nextMatch.b && !nextMatch.a) {
+      nextMatch.winner = nextMatch.b;
+      const nnIdx = nextRoundIdx + 1;
+      if (nnIdx < rounds.length) {
+        const nnMatch = rounds[nnIdx][Math.floor(Math.floor(matchIdx / 2) / 2)];
+        if (Math.floor(matchIdx / 2) % 2 === 0) nnMatch.a = nextMatch.b;
+        else nnMatch.b = nextMatch.b;
+      }
     }
   }
+
+  // Only crown champion if ALL matches in the final round have a winner
+  const finalRound = rounds[rounds.length - 1];
+  const allFinalsDone = finalRound.every(m => m.winner !== null);
+  const champion = allFinalsDone ? finalRound[0].winner : null;
+  const isFinal = !!champion;
+
+  // Update bracket in Firestore
+  await setDoc(doc(db, "groups", groupId, "tournaments", "active"), {
+    ...activeTournament,
+    bracket: serializeBracket(rounds),
+    ...(isFinal ? { winner: champion, status: "finished" } : {}),
+  });
+
+  // ELO updates (best effort)
+  try {
+    const winnerAvg = winner.players.reduce((s, p) => s + (p.doublesElo ?? 1000), 0) / winner.players.length;
+    const loserAvg  = loser.players.reduce((s, p)  => s + (p.doublesElo ?? 1000), 0) / loser.players.length;
+    const exp = 1 / (1 + Math.pow(10, (loserAvg - winnerAvg) / 400));
+    const change = Math.max(Math.round(32 * (1 - exp)), 4);
+
+    await Promise.all([...winner.players, ...loser.players].map(p =>
+      addDoc(collection(db, "groups", groupId, "players", p.id, "eloHistory"), {
+        singlesElo: p.singlesElo ?? 1000,
+        doublesElo: p.doublesElo ?? 1000,
+        timestamp: serverTimestamp(),
+      })
+    ));
+
+    await Promise.all([
+      ...winner.players.map(p =>
+        updateDoc(doc(db, "groups", groupId, "players", p.id), {
+          doublesElo: (p.doublesElo ?? 1000) + change,
+          wins: (p.wins ?? 0) + 1,
+        })
+      ),
+      ...loser.players.map(p =>
+        updateDoc(doc(db, "groups", groupId, "players", p.id), {
+          doublesElo: Math.max((p.doublesElo ?? 1000) - change, 800),
+          losses: (p.losses ?? 0) + 1,
+        })
+      ),
+    ]);
+  } catch (e) {
+    console.error("Tournament ELO update failed:", e);
+  }
+}
 
   async function handleArchive() {
     if (!activeTournament) return;
